@@ -42,6 +42,7 @@ Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **m
 - Le interfacce di ingestion usano `symbol`/`indicator` come identificatore naturale, non `asset_id`: la risoluzione all'id interno avviene nello strato di scrittura/upsert in `db/`, non negli script di ingestion.
 - GDELT: usare il dataset Web NGrams per la copertura ampia sui 500 asset, non la DOC API — il rate limit di 1 richiesta/5s la rende impraticabile a quella scala. Dettagli in `Market Mind AI - Docs/Data Providers/02_gdelt_onboarding.md`.
 - Naming conventions di schema (nomi tabella/colonna/vincolo/indice) sono fissate in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md` § Naming conventions — in particolare la `naming_convention` esplicita su `MetaData` (`pk_<table>`, `fk_<table>_<column>_<ref_table>`, `uq_<table>_<column>`, `ck_<table>_<constraint_name>`) e il prefisso `i<access_method>_` per gli indici creati esplicitamente. Non introdurre nomi impliciti generati da Postgres/SQLAlchemy.
+- Ogni pipeline di import ha il logging abilitato: ogni entry point standalone chiama `marketmind_ai.logging_config.configure_logging()` all'avvio (mai i moduli di libreria, per non duplicare handler). Convenzione completa su livelli/destinazione in `Market Mind AI - Docs/Architettura/04_logging.md`.
 
 ## Fonti dati
 

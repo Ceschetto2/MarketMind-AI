@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 from marketmind_ai.config import get_database_url
 from marketmind_ai.db.base import Base
 from marketmind_ai.db import models  # noqa: F401  (popola Base.metadata)
+from marketmind_ai.logging_config import configure_logging
 
 # Oggetto di configurazione Alembic: script_location/prepend_sys_path/ecc.
 # vengono da [tool.alembic] in pyproject.toml (non esiste più alembic.ini —
@@ -18,15 +19,13 @@ config = context.config
 # statico o meno: viene sempre calcolato qui, a runtime.
 config.set_main_option("sqlalchemy.url", get_database_url())
 
-# Logging: equivalente diretto in Python di quello che prima viveva nelle
-# sezioni [loggers]/[handlers]/[formatters] di alembic.ini — non usiamo più
+# Stesso setup di logging condiviso da ogni pipeline di ingestion (vedi
+# Market Mind AI - Docs/Architettura/04_logging.md) — non usiamo più
 # `logging.config.fileConfig()` perché richiede un file in formato
-# ConfigParser (ini), che qui non esiste.
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(levelname)-5.5s [%(name)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
+# ConfigParser (ini), che qui non esiste più. `alembic` non è nel namespace
+# `marketmind_ai` che `configure_logging()` porta a INFO, quindi va alzato
+# esplicitamente per continuare a vedere i suoi messaggi di avanzamento.
+configure_logging()
 logging.getLogger("alembic").setLevel(logging.INFO)
 
 # Metadata target per l'autogenerate.
