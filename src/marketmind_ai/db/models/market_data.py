@@ -1,30 +1,27 @@
 """Tabelle dello schema `market_data`.
 
-Le tabelle di ingestion (`t_assets`, `t_market_prices`, `t_news_events`,
-`t_macro_events`, `t_company_events`) non conoscono strutturalmente le fonti
-dati: la provenienza vive solo in `source`/`fetched_at`/`raw_payload`
-(colonne presenti su ognuna) così da poter sostituire o aggiungere fonti
-senza toccare lo schema.
-
-NOTA: le colonne oltre a quelle esplicitamente decise in CLAUDE.md (schema
-dati, PK di `t_market_prices`) sono una prima bozza ragionevole in assenza
-del documento ER (`Market Mind AI - Docs/Architettura/01_schema_dati_er.md`,
-non presente in questo checkout) e delle interfacce Pydantic
-(`00_schema_interfacce.md`) — da rivedere non appena quei documenti sono
-disponibili.
+Rispecchia colonna per colonna l'`erDiagram` confermato in
+`Market Mind AI - Docs/Architettura/01_schema_dati_er.md` (vault Obsidian
+esterno al repo, percorso in CLAUDE.md). Le tabelle di ingestion (`t_assets`,
+`t_market_prices`, `t_news_events`, `t_macro_events`, `t_company_events`)
+non conoscono strutturalmente le fonti dati: la provenienza vive solo in
+`source`/`fetched_at`, e `raw_payload` in JSONB dove serve preservare il
+payload originale (non su `t_market_prices`, già completamente tipizzata).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
+    Double,
     ForeignKey,
     Index,
-    Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -35,7 +32,7 @@ SCHEMA = "market_data"
 
 
 class Asset(Base):
-    """Anagrafica dei ~500 asset dell'universo S&P 500.
+    """Anagrafica dei ~500 asset dell'universo S&P 500 (alimentata da yfinance `.info`).
 
     `symbol` è l'identificatore naturale usato dalle interfacce di
     ingestion; `asset_id` è l'id interno a cui `symbol` viene risolto nello
@@ -46,17 +43,14 @@ class Asset(Base):
     __table_args__ = {"schema": SCHEMA}
 
     asset_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
-    name: Mapped[str | None] = mapped_column(Text)
-    exchange: Mapped[str | None] = mapped_column(String(20))
+    symbol: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
     sector: Mapped[str | None] = mapped_column(Text)
-    industry: Mapped[str | None] = mapped_column(Text)
-    currency: Mapped[str | None] = mapped_column(String(10))
-    is_active: Mapped[bool] = mapped_column(default=True, server_default="true")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()"
+    asset_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
     )
-    updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     prices: Mapped[list["MarketPrice"]] = relationship(back_populates="asset")
 
@@ -64,9 +58,8 @@ class Asset(Base):
 class MarketPrice(Base):
     """Prezzi intraday (granularità oraria), hypertable su `ts`.
 
-    PK estesa a `(asset_id, ts, source)` — decisione del 29-08-26: più fonti
-    possono riportare la stessa barra oraria per lo stesso asset e vanno
-    conservate entrambe, non deduplicate silenziosamente.
+    PK estesa a `(asset_id, ts, source)` — decisione del 29-08-26, in vista
+    di una seconda fonte prezzi per l'intraday (per ora solo yfinance).
     """
 
     __tablename__ = "t_market_prices"
@@ -78,100 +71,93 @@ class MarketPrice(Base):
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
     source: Mapped[str] = mapped_column(String(50), primary_key=True)
 
-    open: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    high: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    low: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    close: Mapped[float | None] = mapped_column(Numeric(18, 6))
-    volume: Mapped[int | None] = mapped_column(BigInteger)
-
+    open: Mapped[float] = mapped_column(Double, nullable=False)
+    high: Mapped[float] = mapped_column(Double, nullable=False)
+    low: Mapped[float] = mapped_column(Double, nullable=False)
+    close: Mapped[float] = mapped_column(Double, nullable=False)
+    volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     asset: Mapped["Asset"] = relationship(back_populates="prices")
 
 
 class NewsEvent(Base):
-    """Eventi news (GDELT Web NGrams in prima battuta).
+    """Eventi news (GDELT DOC API / Web NGrams, Finnhub `/company-news`).
 
-    `asset_id` nullable: l'entity linking (match nome azienda/ticker sul
-    QUADGRAM di Web NGrams) può non risolvere a un singolo asset.
+    `asset_id` nullable: GDELT non fornisce un mapping diretto articolo →
+    ticker, la riga viene scritta comunque e l'entity linking la aggiorna
+    in un secondo momento (match sul `QUADGRAM` di Web NGrams).
     """
 
     __tablename__ = "t_news_events"
 
-    event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    news_event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     asset_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey(f"{SCHEMA}.t_assets.asset_id")
     )
-    event_ts: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
     source: Mapped[str] = mapped_column(String(50), nullable=False)
-    title: Mapped[str | None] = mapped_column(Text)
-    url: Mapped[str | None] = mapped_column(Text)
-    tone: Mapped[float | None] = mapped_column(Numeric(9, 4))
+    ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    headline: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    sentiment_score: Mapped[float | None] = mapped_column(Double)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
-        Index("ix_t_news_events_asset_id_event_ts", "asset_id", "event_ts"),
+        Index("ib_news_events_asset_ts", "asset_id", "ts"),
+        Index(
+            "ib_news_events_unlinked",
+            "ts",
+            postgresql_where=text("asset_id IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
 
 class MacroEvent(Base):
-    """Osservazioni macro da FRED, lette via API ALFRED (vintage).
+    """Osservazioni macro da FRED, lette via API ALFRED (vintage, no-look-ahead).
 
-    `vintage_date` è la data alla quale il valore era effettivamente noto
-    (principio no-look-ahead), distinta da `event_ts` che è il periodo a
-    cui l'osservazione si riferisce.
+    Chiave naturale `(indicator, ts)`, senza id surrogato: un indicatore
+    macro come `UNRATE` non appartiene a un singolo asset.
     """
 
     __tablename__ = "t_macro_events"
+    __table_args__ = {"schema": SCHEMA}
 
-    event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    indicator_code: Mapped[str] = mapped_column(String(50), nullable=False)
-    event_ts: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    vintage_date: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    value: Mapped[float | None] = mapped_column(Numeric(20, 8))
+    indicator: Mapped[str] = mapped_column(Text, primary_key=True)
+    ts: Mapped[date] = mapped_column(primary_key=True)
+    value: Mapped[float | None] = mapped_column(Double)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
-    )
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
-
-    __table_args__ = (
-        Index("ix_t_macro_events_indicator_code_event_ts", "indicator_code", "event_ts"),
-        {"schema": SCHEMA},
     )
 
 
 class CompanyEvent(Base):
-    """Eventi societari (earnings, dividendi, split, ...)."""
+    """Eventi societari (Finnhub `/calendar/earnings`, FMP bilanci/dividendi/split)."""
 
     __tablename__ = "t_company_events"
 
-    event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    company_event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     asset_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey(f"{SCHEMA}.t_assets.asset_id"), nullable=False
     )
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    event_ts: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
+    ts: Mapped[date] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
-        Index("ix_t_company_events_asset_id_event_ts", "asset_id", "event_ts"),
+        CheckConstraint(
+            "event_type IN ('earnings', 'dividend', 'split')", name="event_type"
+        ),
+        Index("ib_company_events_asset_ts", "asset_id", "ts"),
         {"schema": SCHEMA},
     )

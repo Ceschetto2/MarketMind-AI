@@ -1,17 +1,18 @@
 """Tabelle dello schema `decisions`.
 
-`t_model_runs`/`t_model_decisions` usano una singola colonna `ts` (non più
-`run_ts`/`decision_ts`) — normalizzazione decisa il 29-08-26.
-
-NOTA: come per `market_data`, i dettagli di colonna oltre alle decisioni
-esplicite in CLAUDE.md sono una prima bozza in assenza del documento ER.
+Rispecchia colonna per colonna l'`erDiagram` confermato in
+`Market Mind AI - Docs/Architettura/01_schema_dati_er.md`. `t_model_runs`/
+`t_model_decisions` usano una singola colonna `ts` (non più `run_ts`/
+`decision_ts`) — normalizzazione decisa il 29-08-26 (agenda #19). Le tre
+tabelle dipendono solo da `t_assets` e tra loro, mai direttamente dalle
+tabelle di ingestion.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Double, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,28 +29,21 @@ class ModelRun(Base):
 
     run_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    llm_model: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
-    run_metadata: Mapped[dict | None] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()"
-    )
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
 
     decisions_made: Mapped[list["ModelDecision"]] = relationship(back_populates="run")
     backtest_results: Mapped[list["BacktestResult"]] = relationship(back_populates="run")
 
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed')",
-            name="status",
-        ),
-        {"schema": SCHEMA},
-    )
-
 
 class ModelDecision(Base):
-    """La decisione BUY/SELL/HOLD presa dall'LLM per un asset in un run."""
+    """La decisione BUY/SELL/HOLD presa dall'LLM per un asset in un run.
+
+    `context_snapshot` salva esattamente il contesto che l'Historical
+    Context Builder ha passato al modello — utile per audit e per
+    riprodurre una decisione a posteriori.
+    """
 
     __tablename__ = "t_model_decisions"
 
@@ -62,29 +56,22 @@ class ModelDecision(Base):
     )
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     decision: Mapped[str] = mapped_column(String(10), nullable=False)
-    confidence: Mapped[float | None] = mapped_column(Numeric(5, 4))
-    rationale: Mapped[str | None] = mapped_column(Text)
-    context_window: Mapped[dict | None] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()"
-    )
+    confidence: Mapped[float | None] = mapped_column(Double)
+    reasoning: Mapped[str | None] = mapped_column(Text)
+    context_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     run: Mapped["ModelRun"] = relationship(back_populates="decisions_made")
 
     __table_args__ = (
-        UniqueConstraint("run_id", "asset_id", name="uq_t_model_decisions_run_id_asset_id"),
         CheckConstraint("decision IN ('BUY', 'SELL', 'HOLD')", name="decision"),
+        Index("ib_model_decisions_asset_ts", "asset_id", "ts"),
+        Index("ib_model_decisions_run_id", "run_id"),
         {"schema": SCHEMA},
     )
 
 
 class BacktestResult(Base):
-    """Esito del backtest (vectorbt, `cash_sharing=True`) su un periodo.
-
-    Le metriche (return, sharpe, drawdown, ...) restano in `metrics` come
-    JSONB invece di essere elencate come colonne rigide: l'insieme esatto
-    delle statistiche da salvare non è ancora stato deciso.
-    """
+    """Esito del backtest (vectorbt, `cash_sharing=True`) su un periodo."""
 
     __tablename__ = "t_backtest_results"
 
@@ -92,17 +79,16 @@ class BacktestResult(Base):
     run_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey(f"{SCHEMA}.t_model_runs.run_id"), nullable=False
     )
-    period_start: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    period_end: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default="now()"
-    )
+    pnl: Mapped[float] = mapped_column(Double, nullable=False)
+    sharpe_ratio: Mapped[float | None] = mapped_column(Double)
+    max_drawdown: Mapped[float | None] = mapped_column(Double)
+    win_rate: Mapped[float | None] = mapped_column(Double)
+    period_start: Mapped[date] = mapped_column(nullable=False)
+    period_end: Mapped[date] = mapped_column(nullable=False)
 
     run: Mapped["ModelRun"] = relationship(back_populates="backtest_results")
 
-    __table_args__ = {"schema": SCHEMA}
+    __table_args__ = (
+        Index("ib_backtest_results_run_id", "run_id"),
+        {"schema": SCHEMA},
+    )
