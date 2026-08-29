@@ -8,7 +8,7 @@ Piattaforma che simula decisioni finanziarie storiche (BUY/SELL/HOLD) tramite un
 
 ## Stato attuale
 
-Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). Non esiste ancora codice applicativo. Il prossimo passo secondo la roadmap è formalizzare lo schema.
+Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). `experiments/` contiene script usa-e-getta per scaricare campioni grezzi da ciascuna fonte (output in `data/samples/`, escluso da git), usati per validare i campi osservati nei doc di onboarding. L'ER diagram dello schema dati è stato formalizzato in `Market Mind AI - Docs/Market Mind AI.md` §6. Non esiste ancora codice applicativo vero e proprio (ingestion/, db/, ecc.). Il prossimo passo secondo la roadmap è la prima migrazione Alembic a partire da quello schema.
 
 ## Stack
 
@@ -33,7 +33,7 @@ Un file per fonte in `Market Mind AI - Docs/Data Providers/` (yfinance, GDELT, F
 
 ## Schema dati
 
-Cinque tabelle: `assets`, `market_prices` (hypertable), `news_events`, `macro_events`, `company_events`. Dettaglio in `Market Mind AI - Docs/Market Mind AI.md` §6.
+Dieci tabelle in tre schema Postgres separati: `market_data` (`t_assets`, `t_market_prices` hypertable, `t_news_events`, `t_macro_events`, `t_company_events`), `decisions` (`t_model_runs`, `t_model_decisions`, `t_backtest_results`), `audit` (`t_ingestion_runs`, `t_audit_logs` — logging e auditing operativo). Nessuna delle tabelle di ingestion conosce strutturalmente le fonti dati: la provenienza vive solo in `source`/`fetched_at`/`raw_payload`, mai nella struttura delle colonne, così da poter sostituire o aggiungere fonti senza modificare lo schema. ER diagram completo e note di design in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`.
 
 ## Decisioni ancora aperte — non assumere, segnalare l'ambiguità
 
