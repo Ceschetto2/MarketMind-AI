@@ -18,7 +18,8 @@ Piattaforma che simula decisioni finanziarie storiche (BUY/SELL/HOLD) tramite un
 
 ## Stato attuale
 
-Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). `experiments/` contiene script usa-e-getta per scaricare campioni grezzi da ciascuna fonte (output in `data/samples/`, escluso da git), usati per validare i campi osservati nei doc di onboarding. Lo schema dati (ER diagram, naming conventions, indicizzazione) è formalizzato in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`; la struttura delle cartelle in `Market Mind AI - Docs/Architettura/00_struttura_cartelle.md`. Il modulo `db/` (modelli SQLAlchemy, naming convention espliciti, session factory) e la prima migrazione Alembic sono implementati, allineati a quell'ER diagram. Non ancora implementati: `schemas/` (le 5 interfacce Pydantic), `ingestion/`, `llm/`, `decision_engine/`, `backtest/`, `dashboard/`, `orchestration/`.
+Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). `experiments/` contiene script usa-e-getta per scaricare campioni grezzi da ciascuna fonte (output in `experiments/data/samples/`, escluso da git), usati per validare i campi osservati nei doc di onboarding. L'ER diagram dello schema dati è stato formalizzato in `Market Mind AI - Docs/Market Mind AI.md` §6. Non esiste ancora codice applicativo vero e proprio (ingestion/, db/, ecc.).
+Nessun backfill storico profondo su nessuna fonte: si parte da subito e si accumulano i dati progressivamente in avanti per le prime settimane di funzionamento (decisione del 29-08-26, `Market Mind AI - Docs/agenda.md` #9/#14/#15).
 
 ## Stack
 
@@ -30,7 +31,7 @@ Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **m
 - **Dashboard**: Streamlit, connessa direttamente a Postgres via SQLAlchemy
 - **Orchestrazione**: nessun tool dedicato — script Python + timer systemd
 - **Container**: Podman rootless via systemd Quadlet; target futuro: server NixOS con `virtualisation.oci-containers`. Per il momento sviluppo localhost.
-- **Provider LLM**: Gemini per la prima implementazione, dietro un'interfaccia generica (`llm/base.py`); nuovi provider si aggiungono come moduli affiancati senza toccare `decision_engine/`.
+- **Provider LLM**: Gemini per la prima implementazione, dietro un'interfaccia generica (decisione confermata il 29-08-26).
 
 ## Decisioni architetturali da rispettare
 
@@ -45,6 +46,11 @@ Un file per fonte in `Market Mind AI - Docs/Data Providers/` (yfinance, GDELT, F
 
 ## Schema dati
 
+Dieci tabelle in tre schema Postgres separati: `market_data` (`t_assets`, `t_market_prices` hypertable, `t_news_events`, `t_macro_events`, `t_company_events`), `decisions` (`t_model_runs`, `t_model_decisions`, `t_backtest_results`), `audit` (`t_ingestion_runs`, `t_audit_logs` — logging e auditing operativo). Nessuna delle tabelle di ingestion conosce strutturalmente le fonti dati: la provenienza vive solo in `source`/`fetched_at`/`raw_payload`, mai nella struttura delle colonne, così da poter sostituire o aggiungere fonti senza modificare lo schema. ER diagram completo e note di design in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`.
+
+## Decisioni prese il 29-08-26 (revisione interattiva, dettaglio in `Market Mind AI - Docs/agenda.md`)
+
+Motore di backtest: vectorbt confermato. Cadenza delle decisioni: settimanale su tutti i 500 asset in una prima fase, con trigger event-driven da valutare in futuro in base a costi e risultati osservati. Granularità temporale dei prezzi: intraday (oraria). Orizzonte storico di backfill: nessuno — si accumula in avanti da quando il sistema è online, su tutte le fonti. Entity linking GDELT → asset: match su nome azienda/ticker estratto dal `QUADGRAM` di Web NGrams. Dati macro FRED: API ALFRED (vintage), non le serie standard, per coerenza col principio no-look-ahead. Retention strategy: safeguard di un anno per ora, da rivedere in base a test futuri. `t_audit_logs` popolata da trigger Postgres, non dallo strato applicativo.
 Dieci tabelle in tre schema Postgres separati: `market_data` (`t_assets`, `t_market_prices` hypertable, `t_news_events`, `t_macro_events`, `t_company_events`), `decisions` (`t_model_runs`, `t_model_decisions`, `t_backtest_results`), `audit` (`t_ingestion_runs`, `t_audit_logs` — logging e auditing operativo). Nessuna delle tabelle di ingestion conosce strutturalmente le fonti dati: la provenienza vive solo in `source`/`fetched_at`, e `raw_payload` in JSONB dove serve preservare il payload originale (non su `t_market_prices`, che è già completamente tipizzata) — mai nella struttura delle colonne, così da poter sostituire o aggiungere fonti senza modificare lo schema. `t_audit_logs` è popolata da un trigger Postgres generico, non dallo strato applicativo. ER diagram completo, tipi, chiavi e indicizzazione in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`.
 
 ## Decisioni prese il 29-08-26 (revisione interattiva, dettaglio completo in `Market Mind AI - Docs/agenda.md`)
@@ -53,6 +59,7 @@ Motore di backtest: vectorbt confermato. Cadenza delle decisioni: settimanale su
 
 ## Decisioni ancora aperte — non assumere, segnalare l'ambiguità
 
+Logica di windowing dell'Historical Context Builder: niente finestra fissa pre-calcolata, l'LLM potrà richiedere più storico o eventi di aziende correlate tramite skill/tool dedicati — restano da definire queste skill/tool stesse (impatta `llm/` e `decision_engine/`, e richiede un provider con function calling/tool-use affidabile).
 Logica di windowing dell'Historical Context Builder e definizione delle skill/tool esposte all'LLM per estenderlo a runtime (richiesta di più storico, eventi di aziende correlate): impatta `llm/` e `decision_engine/`, richiede un provider con function calling/tool-use affidabile (agenda #10, #21). Promemoria operativi non bloccanti: verificare se il reset dei 250 req/giorno del piano free FMP è giornaliero o su finestra mobile (agenda #16); vincolo di licenza "uso non commerciale" del piano free Finnhub, da monitorare se lo scope del progetto cambiasse (agenda #18).
 
 ## Convenzioni di documentazione
