@@ -7,19 +7,23 @@ vivono nel file quadlet: la password passa da `podman secret`, l'utente e il
 nome del database sono `marketmind` (devono combaciare con `.env`, vedi
 `.env.example` in root).
 
-Setup:
+Setup — `deploy.sh` automatizza symlink, secret e avvio del servizio,
+rieseguibile senza effetti collaterali:
 
-    mkdir -p ~/.config/containers/systemd
-    ln -s $(pwd)/deploy/quadlet/marketmind-db.container ~/.config/containers/systemd/
-    ln -s $(pwd)/deploy/quadlet/marketmind-db-data.volume ~/.config/containers/systemd/
-    podman secret create marketmind-db-password -   # incolla la password e Ctrl-D
-    systemctl --user daemon-reload
-    systemctl --user start marketmind-db.service
+    MARKETMIND_DB_PASSWORD=xxx deploy/quadlet/deploy.sh
+
+Senza `MARKETMIND_DB_PASSWORD` in ambiente, se il secret non esiste ancora
+lo script te lo chiede a mano (solo in un terminale interattivo); in CI o
+in uno script non interattivo la variabile è obbligatoria. `deploy.sh
+--restart` forza un riavvio del servizio anche se già attivo. Vedi i
+commenti in testa allo script per le altre variabili d'ambiente supportate.
 
 Poi, con `.env` valorizzato in root del progetto:
 
     uv run alembic upgrade head
 
-Questo target Quadlet è solo per sviluppo su localhost. Il target di
-produzione (server NixOS con `virtualisation.oci-containers`) non è ancora
-definito.
+Questo target Quadlet è solo per sviluppo su localhost. `deploy.sh` è
+scritto per restare riusabile anche da un futuro workflow GitHub Actions
+quando esisterà un target di produzione (server NixOS con
+`virtualisation.oci-containers`) — non ancora definito, vedi
+`Market Mind AI - Docs/Architettura/02_ci_cd.md` e `agenda.md`.
