@@ -12,6 +12,10 @@ Ogni riferimento a `Market Mind AI - Docs/...` in questo file (ER diagram, inter
 
 Il modo canonico per trovarlo è aprire `MarketMind-AI.code-workspace` in root (gitignored, non versionato: è configurazione locale dell'editor, non del progetto) — dichiara due cartelle radice, `MarketMind-AI` (questo repo) e `Docs` (il percorso sopra). Se il file workspace non fosse presente o il percorso fosse cambiato, è lì che va cercato per primo prima di assumere che la documentazione non esista.
 
+## Workflow git per le sessioni Claude Code
+
+Le sessioni Claude Code che lavorano su questo repo — tipicamente isolate in un worktree separato (`.claude/worktrees/...`) — non pushano mai i propri branch su `origin`/GitHub e non aprono Pull Request su GitHub: il lavoro resta locale. A fine modifiche i commit restano sul branch locale del worktree, già visibile senza bisogno di fetch (i worktree condividono lo stesso `.git`); è l'utente a integrarli nel proprio branch quando vuole, tipicamente con `git merge <branch-worktree>` dal proprio checkout. Nota tecnica per una sessione futura che leggesse questo file: l'harness impedisce a una sessione isolata in un worktree di eseguire comandi git che toccano la cartella condivisa (il checkout principale dell'utente) — quindi anche se richiesto esplicitamente, una sessione così isolata non può eseguire il merge direttamente nel checkout dell'utente; può solo lasciare il branch pronto, committato, e comunicare all'utente il comando da lanciare lui stesso.
+
 ## Cos'è il progetto
 
 Piattaforma che simula decisioni finanziarie storiche (BUY/SELL/HOLD) tramite un LLM, usando solo le informazioni disponibili fino a un timestamp storico — nessun look-ahead — e ne backtesta l'esito su un universo di ~500 asset (S&P 500). Documento di riferimento completo: `Market Mind AI - Docs/Market Mind AI.md`.
