@@ -73,8 +73,12 @@ if [ "${1:-}" = "--restart" ]; then
     log "restart $SERVICE_NAME"
     systemctl --user restart "$SERVICE_NAME"
 else
-    log "enable --now $SERVICE_NAME (no-op se già attivo)"
-    systemctl --user enable --now "$SERVICE_NAME"
+    # Le unit generate da Quadlet sono "transient/generated": systemd le
+    # abilita già da sé al daemon-reload processando l'[Install] della
+    # unit .container — `systemctl enable` su una unit così fallisce con
+    # "Unit ... is transient or generated". Basta (ed è idempotente) `start`.
+    log "start $SERVICE_NAME (no-op se già attivo)"
+    systemctl --user start "$SERVICE_NAME"
 fi
 
 if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null)" != "yes" ]; then
