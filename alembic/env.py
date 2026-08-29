@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from logging.config import fileConfig
+import logging
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -9,15 +9,25 @@ from marketmind_ai.config import get_database_url
 from marketmind_ai.db.base import Base
 from marketmind_ai.db import models  # noqa: F401  (popola Base.metadata)
 
-# Oggetto di configurazione Alembic, che dà accesso ai valori del file .ini in uso.
+# Oggetto di configurazione Alembic: script_location/prepend_sys_path/ecc.
+# vengono da [tool.alembic] in pyproject.toml (non esiste più alembic.ini —
+# supporto nativo da Alembic 1.16, vedi commento in pyproject.toml).
 config = context.config
 
-# L'URL reale (da .env / POSTGRES_*) sovrascrive il placeholder in alembic.ini,
-# così alembic.ini resta un template committabile senza credenziali vere.
+# L'URL reale (da .env / POSTGRES_*) non vive in nessun file di config,
+# statico o meno: viene sempre calcolato qui, a runtime.
 config.set_main_option("sqlalchemy.url", get_database_url())
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Logging: equivalente diretto in Python di quello che prima viveva nelle
+# sezioni [loggers]/[handlers]/[formatters] di alembic.ini — non usiamo più
+# `logging.config.fileConfig()` perché richiede un file in formato
+# ConfigParser (ini), che qui non esiste.
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)-5.5s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logging.getLogger("alembic").setLevel(logging.INFO)
 
 # Metadata target per l'autogenerate.
 target_metadata = Base.metadata
