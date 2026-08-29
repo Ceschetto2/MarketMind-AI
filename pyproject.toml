@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = "==3.14.*"
 dependencies = [
+    "alembic>=1.19.1",
+    "psycopg[binary]>=3.3.4",
+    "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
+    "sqlalchemy>=2.0.52",
     "yfinance>=1.7.0",
 ]
 

@@ -1,0 +1,32 @@
+# Quadlet Podman rootless per Postgres+TimescaleDB in sviluppo locale.
+#
+# Installazione (utente, non root):
+#   mkdir -p ~/.config/containers/systemd
+#   ln -s $(pwd)/deploy/quadlet/marketmind-db.container ~/.config/containers/systemd/
+#   podman secret create marketmind-db-password -   # incolla la password e Ctrl-D
+#   systemctl --user daemon-reload
+#   systemctl --user start marketmind-db.service
+#
+# La password deve combaciare con POSTGRES_PASSWORD in .env. Le credenziali
+# non vivono in questo file: vanno in `podman secret`, come da CLAUDE.md.
+
+[Unit]
+Description=MarketMind AI — Postgres + TimescaleDB (sviluppo locale)
+
+[Container]
+Image=docker.io/timescale/timescaledb:latest-pg16
+ContainerName=marketmind-db
+Secret=marketmind-db-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_USER=marketmind
+Environment=POSTGRES_DB=marketmind
+Volume=marketmind-db-data.volume:/var/lib/postgresql/data
+PublishPort=127.0.0.1:5432:5432
+HealthCmd=pg_isready -U marketmind -d marketmind
+HealthInterval=10s
+HealthRetries=5
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
