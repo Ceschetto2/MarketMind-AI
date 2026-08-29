@@ -18,7 +18,7 @@ Piattaforma che simula decisioni finanziarie storiche (BUY/SELL/HOLD) tramite un
 
 ## Stato attuale
 
-Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). `experiments/` contiene script usa-e-getta per scaricare campioni grezzi da ciascuna fonte (output in `data/samples/`, escluso da git), usati per validare i campi osservati nei doc di onboarding. Lo schema dati (ER diagram, naming conventions, indicizzazione) è formalizzato in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`; la struttura delle cartelle in `Market Mind AI - Docs/Architettura/00_struttura_cartelle.md`. Il modulo `db/` (modelli SQLAlchemy, naming convention espliciti, session factory) e la prima migrazione Alembic sono implementati, allineati a quell'ER diagram. Non ancora implementati: `schemas/` (le 5 interfacce Pydantic), `ingestion/`, `llm/`, `decision_engine/`, `backtest/`, `dashboard/`, `orchestration/`.
+Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **mai committarle**, vanno in `podman secret` o in un `.env` escluso da git). `experiments/` contiene script usa-e-getta per scaricare campioni grezzi da ciascuna fonte (output in `data/samples/`, escluso da git), usati per validare i campi osservati nei doc di onboarding. Lo schema dati (ER diagram, naming conventions, indicizzazione) è formalizzato in `Market Mind AI - Docs/Architettura/01_schema_dati_er.md`; la struttura delle cartelle in `Market Mind AI - Docs/Architettura/00_struttura_cartelle.md`. Il modulo `db/` (modelli SQLAlchemy, naming convention espliciti, session factory) e la prima migrazione Alembic sono implementati, allineati a quell'ER diagram. Il deploy locale del container Postgres+TimescaleDB è scriptato in `deploy/quadlet/deploy.sh` (idempotente, non interattivo se `MARKETMIND_DB_PASSWORD` è in ambiente). Non ancora implementati: `schemas/` (le 5 interfacce Pydantic), `ingestion/`, `llm/`, `decision_engine/`, `backtest/`, `dashboard/`, `orchestration/`.
 
 ## Stack
 
@@ -29,7 +29,7 @@ Onboarding e test delle 5 API dati completati (chiavi salvate localmente — **m
 - **Backtesting**: vectorbt, con `cash_sharing=True` per simulare un unico portafoglio
 - **Dashboard**: Streamlit, connessa direttamente a Postgres via SQLAlchemy
 - **Orchestrazione**: nessun tool dedicato — script Python + timer systemd
-- **Container**: Podman rootless via systemd Quadlet; target futuro: server NixOS con `virtualisation.oci-containers`. Per il momento sviluppo localhost.
+- **Container**: Podman rootless via systemd Quadlet, deploy automatizzato da `deploy/quadlet/deploy.sh`; target futuro: server NixOS con `virtualisation.oci-containers`. Per il momento sviluppo localhost. Direzione CI/CD (GitHub Actions) ancora aperta, vedi `Market Mind AI - Docs/Architettura/02_ci_cd.md`.
 - **Provider LLM**: Gemini per la prima implementazione, dietro un'interfaccia generica (`llm/base.py`); nuovi provider si aggiungono come moduli affiancati senza toccare `decision_engine/`.
 
 ## Decisioni architetturali da rispettare
@@ -53,7 +53,7 @@ Motore di backtest: vectorbt confermato. Cadenza delle decisioni: settimanale su
 
 ## Decisioni ancora aperte — non assumere, segnalare l'ambiguità
 
-Logica di windowing dell'Historical Context Builder e definizione delle skill/tool esposte all'LLM per estenderlo a runtime (richiesta di più storico, eventi di aziende correlate): impatta `llm/` e `decision_engine/`, richiede un provider con function calling/tool-use affidabile (agenda #10, #21). Promemoria operativi non bloccanti: verificare se il reset dei 250 req/giorno del piano free FMP è giornaliero o su finestra mobile (agenda #16); vincolo di licenza "uso non commerciale" del piano free Finnhub, da monitorare se lo scope del progetto cambiasse (agenda #18).
+Logica di windowing dell'Historical Context Builder e definizione delle skill/tool esposte all'LLM per estenderlo a runtime (richiesta di più storico, eventi di aziende correlate): impatta `llm/` e `decision_engine/`, richiede un provider con function calling/tool-use affidabile (agenda #10, #21). Automazione CI/CD del deploy container via GitHub Actions: runner self-hosted sul server di destinazione vs. runner GitHub-hosted con deploy via SSH, gestione dei secret nel workflow, eventuale build custom delle immagini — bloccata a monte dall'assenza di un server di destinazione diverso da `localhost` (agenda #22, #23, #24; dettaglio in `Market Mind AI - Docs/Architettura/02_ci_cd.md`). Promemoria operativi non bloccanti: verificare se il reset dei 250 req/giorno del piano free FMP è giornaliero o su finestra mobile (agenda #16); vincolo di licenza "uso non commerciale" del piano free Finnhub, da monitorare se lo scope del progetto cambiasse (agenda #18).
 
 ## Convenzioni di documentazione
 
