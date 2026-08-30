@@ -6,6 +6,12 @@ Rispecchia colonna per colonna l'`erDiagram` confermato in
 `decision_ts`) — normalizzazione decisa il 29-08-26 (agenda #19). Le tre
 tabelle dipendono solo da `t_assets` e tra loro, mai direttamente dalle
 tabelle di ingestion.
+
+Il tracking del portafoglio virtuale (`t_portfolios` e le tabelle
+collegate) NON vive qui: è stato introdotto qui il 29-08-26 ma spostato in
+un proprio schema dedicato, `portfolio` (`db/models/portfolio.py`), il
+30-08-26 — il portafoglio è lo stato che risulta dall'eseguire le
+decisioni nel tempo, non una decisione in sé (agenda #35).
 """
 
 from __future__ import annotations
