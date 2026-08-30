@@ -32,7 +32,7 @@ QUADLET_SRC="$REPO_ROOT/deploy/quadlet"
 QUADLET_DST="${MARKETMIND_QUADLET_DIR:-$HOME/.config/containers/systemd}"
 SECRET_NAME="marketmind-db-password"
 SERVICE_NAME="marketmind-db.service"
-UNITS=(marketmind-db.container marketmind-db-data.volume)
+UNITS=(marketmind.network marketmind-db.container marketmind-db-data.volume)
 
 log() { printf '[deploy] %s\n' "$*" >&2; }
 fail() { log "ERRORE: $*"; exit 1; }
