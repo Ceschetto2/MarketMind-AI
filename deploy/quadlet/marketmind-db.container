@@ -11,21 +11,18 @@
 # La password deve combaciare con POSTGRES_PASSWORD in .env. Le credenziali
 # non vivono in questo file: vanno in `podman secret`, come da CLAUDE.md.
 #
-# NON ANCORA ATTIVO — deciso il 30-08-26 (vedi `marketmind.network` e
-# `Market Mind AI - Docs/Architettura/05_networking.md`): il container andrà
-# agganciato alla rete Podman condivisa `marketmind.network`, così che i
-# futuri container delle pipeline di ingestion la raggiungano come
-# `marketmind-db:5432` via il DNS integrato di Podman, senza passare dalla
-# porta pubblicata sull'host (`PublishPort` resta comunque invariata, per
-# gli strumenti che girano sull'host nudo — le due vie coesistono). Non
-# ancora aggiunta la riga `Network=marketmind.network` qui sotto: il primo
-# tentativo ha rotto il servizio (`netavark: create bridge: Netlink error:
-# Operation not supported`), causa diagnosticata in
+# `Network=marketmind.network` (deciso il 30-08-26, vedi `marketmind.network`
+# e `Market Mind AI - Docs/Architettura/05_networking.md`) mette il
+# container sulla rete Podman condivisa: i futuri container delle pipeline
+# di ingestion la raggiungono come `marketmind-db:5432` via il DNS
+# integrato di Podman, senza passare dalla porta pubblicata sull'host.
+# `PublishPort` resta comunque invariata, per gli strumenti che girano
+# sull'host nudo — le due vie coesistono. Attivata il 30-08-26 dopo un
+# riavvio della macchina: il primo tentativo, a caldo, aveva rotto il
+# servizio (`netavark: create bridge: Netlink error: Operation not
+# supported`, causa diagnosticata in
 # `Market Mind AI - Docs/tasks/2026-08-30-networking-podman.md` — un
-# riavvio del kernel già installato ma non ancora caricato, non un limite
-# di design. Verificare con `podman run --rm --network marketmind-test
-# alpine true` dopo il riavvio, poi aggiungere `Network=marketmind.network`
-# alla sezione `[Container]` sotto e ridistribuire con `deploy.sh --restart`.
+# kernel già aggiornato ma non ancora caricato, non un limite di design).
 
 [Unit]
 Description=MarketMind AI — Postgres + TimescaleDB (sviluppo locale)
@@ -33,6 +30,7 @@ Description=MarketMind AI — Postgres + TimescaleDB (sviluppo locale)
 [Container]
 Image=docker.io/timescale/timescaledb:latest-pg16
 ContainerName=marketmind-db
+Network=marketmind.network
 Secret=marketmind-db-password,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_USER=marketmind
 Environment=POSTGRES_DB=marketmind
