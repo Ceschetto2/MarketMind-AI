@@ -17,6 +17,12 @@ from marketmind_ai.db.models.market_data import (
     MarketPrice,
     NewsEvent,
 )
+from marketmind_ai.db.models.portfolio import (
+    Portfolio,
+    PortfolioPosition,
+    PortfolioPositionSnapshot,
+    PortfolioSnapshot,
+)
 
 __all__ = [
     "Asset",
@@ -27,6 +33,10 @@ __all__ = [
     "ModelRun",
     "ModelDecision",
     "BacktestResult",
+    "Portfolio",
+    "PortfolioPosition",
+    "PortfolioSnapshot",
+    "PortfolioPositionSnapshot",
     "IngestionRun",
     "AuditLog",
 ]
