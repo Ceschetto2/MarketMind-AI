@@ -16,6 +16,7 @@ dist/
 # Environments — secrets never get committed (see CLAUDE.md)
 .env
 .env.*
+!.env.example
 .envrc
 .venv/
 env/

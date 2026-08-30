@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = "==3.14.*"
 dependencies = [
+    "alembic>=1.19.1",
+    "psycopg[binary]>=3.3.4",
+    "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
+    "sqlalchemy>=2.0.52",
     "yfinance>=1.7.0",
 ]
 
@@ -19,3 +23,13 @@ marketmind-ai = "marketmind_ai:main"
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.alembic]
+# Config di Alembic (>=1.16 supporta [tool.alembic] in pyproject.toml al
+# posto di alembic.ini, che infatti non esiste più in questo repo — vedi
+# alembic/env.py per la parte che l'ini gestiva altrimenti, cioè logging e
+# sqlalchemy.url: quest'ultima non è mai qui perché env.py la calcola
+# sempre da marketmind_ai.config.get_database_url(), mai da file statico.
+script_location = "alembic"
+prepend_sys_path = ["."]
+version_path_separator = "os"

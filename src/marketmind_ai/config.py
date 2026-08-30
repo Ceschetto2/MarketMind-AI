@@ -25,3 +25,26 @@ def get_api_key(name: str) -> str:
             "in root del progetto e valorizzala."
         )
     return value
+
+
+def get_database_url() -> str:
+    """Costruisce la connection string SQLAlchemy per Postgres+TimescaleDB.
+
+    Se `DATABASE_URL` è impostata ha precedenza su tutto; altrimenti viene
+    composta dalle singole variabili `POSTGRES_*` (con default coerenti col
+    quadlet di sviluppo in `deploy/quadlet/marketmind-db.container`).
+    """
+    explicit_url = os.environ.get("DATABASE_URL")
+    if explicit_url:
+        return explicit_url
+
+    user = os.environ.get("POSTGRES_USER", "marketmind")
+    password = os.environ.get("POSTGRES_PASSWORD", "marketmind")
+    # "localhost" risolve anche su ::1 (IPv6): il quadlet di sviluppo
+    # pubblica solo su IPv4, quindi con "localhost" un tentativo di
+    # connessione può restare appeso sul lato IPv6 fino al timeout prima
+    # di arrivare a quello IPv4 che funziona — default a un IP esplicito.
+    host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    db = os.environ.get("POSTGRES_DB", "marketmind")
+    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"

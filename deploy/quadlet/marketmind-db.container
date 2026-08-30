@@ -1,0 +1,47 @@
+# Quadlet Podman rootless per Postgres+TimescaleDB in sviluppo locale.
+#
+# Installazione (utente, non root):
+#   mkdir -p ~/.config/containers/systemd
+#   ln -s $(pwd)/deploy/quadlet/marketmind-db.container ~/.config/containers/systemd/
+#   ln -s $(pwd)/deploy/quadlet/marketmind.network ~/.config/containers/systemd/
+#   podman secret create marketmind-db-password -   # incolla la password e Ctrl-D
+#   systemctl --user daemon-reload
+#   systemctl --user start marketmind-db.service
+#
+# La password deve combaciare con POSTGRES_PASSWORD in .env. Le credenziali
+# non vivono in questo file: vanno in `podman secret`, come da CLAUDE.md.
+#
+# `Network=marketmind.network` (deciso il 30-08-26, vedi `marketmind.network`
+# e `Market Mind AI - Docs/Architettura/05_networking.md`) mette il
+# container sulla rete Podman condivisa: i futuri container delle pipeline
+# di ingestion la raggiungono come `marketmind-db:5432` via il DNS
+# integrato di Podman, senza passare dalla porta pubblicata sull'host.
+# `PublishPort` resta comunque invariata, per gli strumenti che girano
+# sull'host nudo — le due vie coesistono. Attivata il 30-08-26 dopo un
+# riavvio della macchina: il primo tentativo, a caldo, aveva rotto il
+# servizio (`netavark: create bridge: Netlink error: Operation not
+# supported`, causa diagnosticata in
+# `Market Mind AI - Docs/tasks/2026-08-30-networking-podman.md` — un
+# kernel già aggiornato ma non ancora caricato, non un limite di design).
+
+[Unit]
+Description=MarketMind AI — Postgres + TimescaleDB (sviluppo locale)
+
+[Container]
+Image=docker.io/timescale/timescaledb:latest-pg16
+ContainerName=marketmind-db
+Network=marketmind.network
+Secret=marketmind-db-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_USER=marketmind
+Environment=POSTGRES_DB=marketmind
+Volume=marketmind-db-data.volume:/var/lib/postgresql/data
+PublishPort=127.0.0.1:5432:5432
+HealthCmd=pg_isready -U marketmind -d marketmind
+HealthInterval=10s
+HealthRetries=5
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
