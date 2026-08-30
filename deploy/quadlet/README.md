@@ -5,7 +5,16 @@ Quadlet Podman rootless per l'ambiente di sviluppo locale.
 volume Podman dichiarato in `marketmind-db-data.volume`. Le credenziali non
 vivono nel file quadlet: la password passa da `podman secret`, l'utente e il
 nome del database sono `marketmind` (devono combaciare con `.env`, vedi
-`.env.example` in root).
+`.env.example` in root). `marketmind.network` (deciso il 30-08-26) è la rete
+Podman condivisa pensata per collegare `marketmind-db` e i futuri container
+delle pipeline di ingestion (che lo raggiungerebbero come `marketmind-db:5432`
+via il DNS integrato di Podman, indipendentemente dalla porta pubblicata
+sull'host) — **non ancora agganciata** a `marketmind-db.container`: il primo
+tentativo ha rotto il servizio per un problema di kernel non ancora
+riavviato sulla macchina di sviluppo, non un limite di design. Dettaglio
+completo, diagnosi e passi per attivarla in
+`Market Mind AI - Docs/Architettura/05_networking.md` e
+`Market Mind AI - Docs/tasks/2026-08-30-networking-podman.md`.
 
 Setup — `deploy.sh` automatizza symlink, secret e avvio del servizio,
 rieseguibile senza effetti collaterali:
