@@ -1,12 +1,15 @@
 """Tabelle dello schema `market_data`.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md` (vault Obsidian
-esterno al repo, percorso in CLAUDE.md). Le tabelle di ingestion (`t_assets`,
+`Market Mind AI - Docs/db/01_schema_dati_er.md` (vault Obsidian esterno al
+repo, percorso in CLAUDE.md). Le tabelle di ingestion (`t_assets`,
 `t_market_prices`, `t_news_events`, `t_macro_events`, `t_company_events`)
 non conoscono strutturalmente le fonti dati: la provenienza vive solo in
-`source`/`fetched_at`, e `raw_payload` in JSONB dove serve preservare il
-payload originale (non su `t_market_prices`, già completamente tipizzata).
+`source`/`fetched_at`. Il payload grezzo completo (dove ha senso
+preservarlo, cioè su `t_news_events`/`t_company_events`) NON vive più qui:
+spostato in una tabella dedicata in un proprio schema, `raw`
+(`db/models/raw.py`), il 05-09-26 — ribalta la decisione precedente di
+tenerlo in JSONB inline (vedi `raw.py` per il razionale completo).
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from marketmind_ai.db.base import Base
@@ -101,7 +104,6 @@ class NewsEvent(Base):
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     sentiment_score: Mapped[float | None] = mapped_column(Double)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
@@ -148,7 +150,6 @@ class CompanyEvent(Base):
     )
     ts: Mapped[date] = mapped_column(nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
