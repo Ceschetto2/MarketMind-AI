@@ -36,6 +36,11 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
+# CSV di seed dell'universo (pipeline `universe-csv`): tracciato in git come
+# il codice, quindi baked nell'immagine come il resto — aggiornarlo richiede
+# un rebuild, coerente con la cadenza manuale/mensile di quella pipeline.
+COPY seeds ./seeds
+
 # Nessun ENTRYPOINT/CMD in questa immagine: è condivisa da tutte e otto le
 # pipeline di ingestion, e il comando effettivo (`python -m
 # marketmind_ai.ingestion.<pipeline>_pipeline`) arriva per intero da `Exec=`

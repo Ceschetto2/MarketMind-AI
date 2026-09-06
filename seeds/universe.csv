@@ -1,0 +1,27 @@
+symbol,name,sector,asset_type,is_benchmark
+AAPL,Apple Inc.,Technology,equity,false
+MSFT,Microsoft Corporation,Technology,equity,false
+GOOGL,Alphabet Inc.,Technology,equity,false
+AMZN,Amazon.com Inc.,Consumer Discretionary,equity,false
+NVDA,NVIDIA Corporation,Technology,equity,false
+META,Meta Platforms Inc.,Technology,equity,false
+TSLA,Tesla Inc.,Consumer Discretionary,equity,false
+BRK-B,Berkshire Hathaway Inc.,Financials,equity,false
+JPM,JPMorgan Chase & Co.,Financials,equity,false
+V,Visa Inc.,Financials,equity,false
+JNJ,Johnson & Johnson,Health Care,equity,false
+WMT,Walmart Inc.,Consumer Staples,equity,false
+PG,Procter & Gamble Co.,Consumer Staples,equity,false
+MA,Mastercard Inc.,Financials,equity,false
+HD,Home Depot Inc.,Consumer Discretionary,equity,false
+XOM,Exxon Mobil Corporation,Energy,equity,false
+UNH,UnitedHealth Group Inc.,Health Care,equity,false
+BAC,Bank of America Corp.,Financials,equity,false
+DIS,Walt Disney Co.,Communication Services,equity,false
+KO,Coca-Cola Co.,Consumer Staples,equity,false
+PFE,Pfizer Inc.,Health Care,equity,false
+CSCO,Cisco Systems Inc.,Technology,equity,false
+NFLX,Netflix Inc.,Communication Services,equity,false
+INTC,Intel Corporation,Technology,equity,false
+AMD,Advanced Micro Devices Inc.,Technology,equity,false
+SPY,SPDR S&P 500 ETF Trust,,etf,true

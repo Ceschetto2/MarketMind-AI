@@ -24,9 +24,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, MarketPrice
+from marketmind_ai.db.models.market_data import Asset, MarketPrice, UniverseMember
 from marketmind_ai.db.session import get_session
-from marketmind_ai.schemas import MarketPriceRecord
+from marketmind_ai.schemas import MarketPriceRecord, UniverseMemberRecord
 
 
 class AssetNotFoundError(LookupError):
@@ -84,6 +84,55 @@ def upsert_market_price(session: Session, asset_id: int, record: MarketPriceReco
             "low": stmt.excluded.low,
             "close": stmt.excluded.close,
             "volume": stmt.excluded.volume,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    )
+    session.execute(stmt)
+
+
+def resolve_or_create_asset(session: Session, record: UniverseMemberRecord) -> int:
+    """Come `resolve_asset_id`, ma crea la riga in `t_assets` se manca.
+
+    Solo per pipeline che portano abbastanza dati per farlo (oggi solo
+    `universe-csv`, via `UniverseMemberRecord`, l'unica interfaccia con
+    `asset_type`): non aggiorna un asset già esistente, anche se il record
+    porta un `name`/`sector` diverso — evitare che `universe-csv` sovrascriva
+    dati più freschi scritti da `yfinance-assets` non è nel suo compito.
+    """
+    asset_id = session.execute(
+        select(Asset.asset_id).where(Asset.symbol == record.symbol)
+    ).scalar_one_or_none()
+    if asset_id is not None:
+        return asset_id
+
+    asset = Asset(
+        symbol=record.symbol,
+        name=record.name,
+        sector=record.sector,
+        asset_type=record.asset_type,
+        source=record.source,
+        fetched_at=record.fetched_at,
+    )
+    session.add(asset)
+    session.flush()
+    return asset.asset_id
+
+
+def upsert_universe_member(
+    session: Session, asset_id: int, record: UniverseMemberRecord
+) -> None:
+    """Upsert idempotente su `market_data.t_universe_members` (PK `asset_id`)."""
+    stmt = pg_insert(UniverseMember).values(
+        asset_id=asset_id,
+        is_benchmark=record.is_benchmark,
+        source=record.source,
+        fetched_at=record.fetched_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[UniverseMember.asset_id],
+        set_={
+            "is_benchmark": stmt.excluded.is_benchmark,
+            "source": stmt.excluded.source,
             "fetched_at": stmt.excluded.fetched_at,
         },
     )

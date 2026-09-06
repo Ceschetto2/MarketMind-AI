@@ -109,10 +109,18 @@ class UniverseMemberRecord(BaseModel):
 
     `is_benchmark` è `True` solo per SPY: esclude l'asset dalla lista su cui
     gira il motore decisionale, non dall'ingestion.
+
+    Porta anche `sector`/`asset_type`, non solo i campi di `t_universe_members`:
+    lo strato di scrittura deve poter creare la riga in `t_assets` se manca
+    (`asset_type` è `NOT NULL` lì), senza dipendere dall'aver già eseguito
+    `yfinance-assets` — stesso pattern di `NewsEventRecord`/`CompanyEventRecord`,
+    che alimentano più di una tabella da un solo record validato.
     """
 
     symbol: str
     name: str
+    sector: Optional[str] = None
+    asset_type: str
     is_benchmark: bool
     source: str
     fetched_at: datetime

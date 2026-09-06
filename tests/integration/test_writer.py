@@ -16,15 +16,17 @@ import pytest
 from sqlalchemy import delete, select
 
 from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, MarketPrice
+from marketmind_ai.db.models.market_data import Asset, MarketPrice, UniverseMember
 from marketmind_ai.db.session import get_session
 from marketmind_ai.db.writer import (
     AssetNotFoundError,
     ingestion_run,
     resolve_asset_id,
+    resolve_or_create_asset,
     upsert_market_price,
+    upsert_universe_member,
 )
-from marketmind_ai.schemas import MarketPriceRecord
+from marketmind_ai.schemas import MarketPriceRecord, UniverseMemberRecord
 
 pytestmark = pytest.mark.integration
 
@@ -105,6 +107,68 @@ class TestUpsertMarketPrice:
         )
         assert len(rows) == 1
         assert rows[0].close == 200.0
+
+
+def _universe_record(symbol: str, **overrides) -> UniverseMemberRecord:
+    defaults = dict(
+        symbol=symbol,
+        name="Test Asset",
+        sector="Test",
+        asset_type="equity",
+        is_benchmark=False,
+        source="universe-csv",
+        fetched_at=datetime.now(timezone.utc),
+    )
+    defaults.update(overrides)
+    return UniverseMemberRecord(**defaults)
+
+
+class TestResolveOrCreateAsset:
+    def test_crea_asset_se_manca(self, db_session):
+        record = _universe_record("TESTX")
+
+        asset_id = resolve_or_create_asset(db_session, record)
+        db_session.flush()
+
+        row = db_session.get(Asset, asset_id)
+        assert row.symbol == "TESTX"
+        assert row.asset_type == "equity"
+        assert row.source == "universe-csv"
+
+    def test_riusa_asset_esistente_senza_duplicare(self, db_session):
+        existing_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        record = _universe_record("TESTX", name="Nome diverso, non deve sovrascrivere")
+        asset_id = resolve_or_create_asset(db_session, record)
+
+        assert asset_id == existing_id
+        # non tocca una riga già scritta da un'altra pipeline (es.
+        # yfinance-assets): resolve_or_create_asset crea solo se manca, non
+        # aggiorna un asset già esistente.
+        row = db_session.get(Asset, asset_id)
+        assert row.name == "Test Asset"
+
+
+class TestUpsertUniverseMember:
+    def test_insert_e_upsert_idempotente(self, db_session):
+        asset_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        upsert_universe_member(db_session, asset_id, _universe_record("TESTX", is_benchmark=False))
+        db_session.flush()
+        upsert_universe_member(db_session, asset_id, _universe_record("TESTX", is_benchmark=True))
+        db_session.flush()
+
+        rows = (
+            db_session.execute(
+                select(UniverseMember).where(UniverseMember.asset_id == asset_id)
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].is_benchmark is True
 
 
 class TestIngestionRun:

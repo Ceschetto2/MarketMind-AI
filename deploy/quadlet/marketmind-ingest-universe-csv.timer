@@ -1,0 +1,15 @@
+# Rete di sicurezza per la pipeline `universe-csv`, non il trigger primario
+# (quello resta manuale, `deploy.sh --trigger universe-csv`): la
+# composizione dell'universo cambia troppo di rado per giustificare un
+# timer orario/giornaliero. Copre solo il caso in cui `seeds/universe.csv`
+# venga aggiornato senza che qualcuno ricordi di lanciare il trigger.
+
+[Unit]
+Description=MarketMind AI — timer di sicurezza ingestion universe-csv (mensile)
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

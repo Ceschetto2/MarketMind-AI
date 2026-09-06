@@ -197,22 +197,54 @@ class TestCompanyEventRecord:
 
 
 class TestUniverseMemberRecord:
+    """Porta anche `sector`/`asset_type` (non solo `is_benchmark`): la pipeline
+    `universe-csv` deve poter creare la riga in `t_assets` se manca, non solo
+    quella in `t_universe_members` — `asset_type` è `NOT NULL` su `t_assets`,
+    quindi è un campo obbligatorio qui, non opzionale come su `AssetRecord`
+    (dove yfinance lo restituisce sempre da `.info()`)."""
+
     def test_valid_construction(self):
         record = UniverseMemberRecord(
             symbol="SPY",
             name="SPDR S&P 500 ETF Trust",
+            sector=None,
+            asset_type="etf",
             is_benchmark=True,
             source="universe-csv",
             fetched_at=FETCHED_AT,
         )
         assert record.is_benchmark is True
+        assert record.asset_type == "etf"
 
-    def test_missing_required_field_raises(self):
+    def test_sector_defaults_to_none_when_omitted(self):
+        record = UniverseMemberRecord(
+            symbol="AAPL",
+            name="Apple Inc.",
+            asset_type="equity",
+            is_benchmark=False,
+            source="universe-csv",
+            fetched_at=FETCHED_AT,
+        )
+        assert record.sector is None
+
+    def test_missing_is_benchmark_raises(self):
         with pytest.raises(ValidationError):
             UniverseMemberRecord(
                 symbol="SPY",
                 name="SPDR S&P 500 ETF Trust",
+                asset_type="etf",
                 source="universe-csv",
                 fetched_at=FETCHED_AT,
                 # is_benchmark mancante
+            )
+
+    def test_missing_asset_type_raises(self):
+        with pytest.raises(ValidationError):
+            UniverseMemberRecord(
+                symbol="AAPL",
+                name="Apple Inc.",
+                is_benchmark=False,
+                source="universe-csv",
+                fetched_at=FETCHED_AT,
+                # asset_type mancante
             )
