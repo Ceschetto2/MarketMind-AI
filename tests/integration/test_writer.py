@@ -16,7 +16,14 @@ import pytest
 from sqlalchemy import delete, select
 
 from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, CompanyEvent, MarketPrice, NewsEvent, UniverseMember
+from marketmind_ai.db.models.market_data import (
+    Asset,
+    CompanyEvent,
+    MacroEvent,
+    MarketPrice,
+    NewsEvent,
+    UniverseMember,
+)
 from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
 from marketmind_ai.db.writer import (
@@ -25,6 +32,7 @@ from marketmind_ai.db.writer import (
     ingestion_run,
     resolve_asset_id,
     resolve_or_create_asset,
+    upsert_macro_event,
     upsert_market_price,
     upsert_universe_member,
     write_company_event,
@@ -32,6 +40,7 @@ from marketmind_ai.db.writer import (
 )
 from marketmind_ai.schemas import (
     CompanyEventRecord,
+    MacroEventRecord,
     MarketPriceRecord,
     NewsEventRecord,
     UniverseMemberRecord,
@@ -337,6 +346,42 @@ class TestGetUniverseSymbols:
             assert "TESTY_NON_UNIVERSO" not in symbols
         finally:
             self._cleanup()
+
+
+class TestUpsertMacroEvent:
+    def test_insert_prima_osservazione(self, db_session):
+        record = MacroEventRecord(
+            indicator="UNRATE",
+            ts=date(2026, 1, 1),
+            value=3.6,
+            source="FRED",
+            fetched_at=datetime.now(timezone.utc),
+        )
+        upsert_macro_event(db_session, record)
+        db_session.flush()
+
+        row = db_session.get(MacroEvent, {"indicator": "UNRATE", "ts": date(2026, 1, 1)})
+        assert row.value == 3.6
+
+    def test_upsert_aggiorna_valore_revisionato(self, db_session):
+        base = dict(indicator="UNRATE", ts=date(2026, 1, 1), source="FRED")
+        upsert_macro_event(
+            db_session,
+            MacroEventRecord(**base, value=None, fetched_at=datetime.now(timezone.utc)),
+        )
+        db_session.flush()
+        # valore pubblicato in un secondo momento (era "." nella risposta grezza)
+        upsert_macro_event(
+            db_session,
+            MacroEventRecord(**base, value=3.6, fetched_at=datetime.now(timezone.utc)),
+        )
+        db_session.flush()
+
+        rows = db_session.execute(
+            select(MacroEvent).where(MacroEvent.indicator == "UNRATE")
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].value == 3.6
 
 
 class TestIngestionRun:

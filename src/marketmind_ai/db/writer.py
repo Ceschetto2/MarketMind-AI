@@ -27,6 +27,7 @@ from marketmind_ai.db.models.audit import IngestionRun
 from marketmind_ai.db.models.market_data import (
     Asset,
     CompanyEvent,
+    MacroEvent,
     MarketPrice,
     NewsEvent,
     UniverseMember,
@@ -35,6 +36,7 @@ from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
 from marketmind_ai.schemas import (
     CompanyEventRecord,
+    MacroEventRecord,
     MarketPriceRecord,
     NewsEventRecord,
     UniverseMemberRecord,
@@ -162,6 +164,33 @@ def upsert_universe_member(
         index_elements=[UniverseMember.asset_id],
         set_={
             "is_benchmark": stmt.excluded.is_benchmark,
+            "source": stmt.excluded.source,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    )
+    session.execute(stmt)
+
+
+def upsert_macro_event(session: Session, record: MacroEventRecord) -> None:
+    """Upsert idempotente su `market_data.t_macro_events` (chiave naturale
+    già in schema: `(indicator, ts)`, nessun gap da colmare come per
+    eventi/news). Un valore rivisto (`value` cambia da `None` a un numero,
+    o da una stima a un valore definitivo) sovrascrive quello precedente —
+    coerente con ALFRED: la pipeline FRED interroga sempre `realtime_end`
+    al momento della query, quindi il valore scritto è sempre il più
+    aggiornato *noto a quel momento*, non quello di un vintage passato.
+    """
+    stmt = pg_insert(MacroEvent).values(
+        indicator=record.indicator,
+        ts=record.ts,
+        value=record.value,
+        source=record.source,
+        fetched_at=record.fetched_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[MacroEvent.indicator, MacroEvent.ts],
+        set_={
+            "value": stmt.excluded.value,
             "source": stmt.excluded.source,
             "fetched_at": stmt.excluded.fetched_at,
         },
