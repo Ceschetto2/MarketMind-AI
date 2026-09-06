@@ -1,7 +1,7 @@
 """Tabelle dello schema `portfolio` — tracking del portafoglio virtuale.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md`. Le quattro
+`Market Mind AI - Docs/db/01_schema_dati_er.md`. Le quattro
 tabelle sono state introdotte il 29-08-26 dentro `decisions`, poi spostate
 in questo schema dedicato il 30-08-26 (agenda #35): il portafoglio è lo
 stato applicativo che *risulta* dall'eseguire nel tempo le decisioni

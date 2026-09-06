@@ -1,7 +1,7 @@
 """Tracking del portafoglio virtuale: 4 tabelle in un proprio schema `portfolio`, trigger dedicati.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md` (rework del
+`Market Mind AI - Docs/db/01_schema_dati_er.md` (rework del
 29-08-26, agenda #33/#34, e refactor di schema del 30-08-26, agenda #35):
 `t_portfolios` (contenitore generico, `portfolio_type` 'model' | 'benchmark',
 stato corrente mutabile cash/equity_value) e `t_portfolio_positions` (stato
