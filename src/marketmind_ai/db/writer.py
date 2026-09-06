@@ -52,6 +52,24 @@ class AssetNotFoundError(LookupError):
     """
 
 
+def get_universe_symbols() -> list[str]:
+    """Ticker su cui operano le pipeline — da `t_universe_members`, non
+    hardcoded in ciascuna. Condivisa da tutte le pipeline (prezzi, news,
+    earnings, macro, fundamentals): includono tutte SPY (`is_benchmark=True`,
+    ha comunque bisogno dei propri dati per l'equity curve del benchmark),
+    l'esclusione dal motore decisionale è un filtro a valle, non
+    dell'ingestion.
+    """
+    with get_session() as session:
+        return list(
+            session.execute(
+                select(Asset.symbol).join(
+                    UniverseMember, UniverseMember.asset_id == Asset.asset_id
+                )
+            ).scalars()
+        )
+
+
 def resolve_asset_id(session: Session, symbol: str) -> int:
     """Risolve `symbol` all'`asset_id` interno.
 

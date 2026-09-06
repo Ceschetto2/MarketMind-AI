@@ -21,6 +21,7 @@ from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
 from marketmind_ai.db.writer import (
     AssetNotFoundError,
+    get_universe_symbols,
     ingestion_run,
     resolve_asset_id,
     resolve_or_create_asset,
@@ -273,6 +274,69 @@ class TestWriteCompanyEvent:
         ).scalars().all()
         assert len(rows) == 1
         assert rows[0].source == "FMP"
+
+
+class TestGetUniverseSymbols:
+    """Apre una propria sessione (`get_session()`), su una connessione
+    diversa da quella di `db_session` (che tiene aperta una transazione con
+    savepoint su una connessione a sé): righe scritte tramite `db_session`
+    non sarebbero visibili a un'altra connessione finché non committate per
+    davvero, per il normale isolamento delle transazioni Postgres. Setup/
+    pulizia passano quindi anche loro da `get_session()`, non dalla fixture.
+    """
+
+    def _cleanup(self) -> None:
+        with get_session() as session:
+            session.execute(
+                delete(UniverseMember).where(
+                    UniverseMember.asset_id.in_([TEST_ASSET_ID, TEST_ASSET_ID - 1])
+                )
+            )
+            session.execute(
+                delete(Asset).where(
+                    Asset.asset_id.in_([TEST_ASSET_ID, TEST_ASSET_ID - 1])
+                )
+            )
+
+    def test_include_solo_membri_universo(self):
+        with get_session() as session:
+            session.add(
+                Asset(
+                    asset_id=TEST_ASSET_ID,
+                    symbol="TESTX",
+                    name="Test Asset",
+                    sector="Test",
+                    asset_type="equity",
+                    source="yfinance",
+                    fetched_at=datetime.now(timezone.utc),
+                )
+            )
+            session.add(
+                Asset(
+                    asset_id=TEST_ASSET_ID - 1,
+                    symbol="TESTY_NON_UNIVERSO",
+                    name="Non in universo",
+                    sector="Test",
+                    asset_type="equity",
+                    source="yfinance",
+                    fetched_at=datetime.now(timezone.utc),
+                )
+            )
+            session.add(
+                UniverseMember(
+                    asset_id=TEST_ASSET_ID,
+                    is_benchmark=False,
+                    source="universe-csv",
+                    fetched_at=datetime.now(timezone.utc),
+                )
+            )
+
+        try:
+            symbols = get_universe_symbols()
+            assert "TESTX" in symbols
+            assert "TESTY_NON_UNIVERSO" not in symbols
+        finally:
+            self._cleanup()
 
 
 class TestIngestionRun:

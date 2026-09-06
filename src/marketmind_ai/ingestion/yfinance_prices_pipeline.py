@@ -24,12 +24,16 @@ import time
 from datetime import datetime, timezone
 
 import yfinance as yf
-from sqlalchemy import select
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from marketmind_ai.db.models.market_data import Asset, UniverseMember
 from marketmind_ai.db.session import get_session
-from marketmind_ai.db.writer import AssetNotFoundError, ingestion_run, resolve_asset_id, upsert_market_price
+from marketmind_ai.db.writer import (
+    AssetNotFoundError,
+    get_universe_symbols,
+    ingestion_run,
+    resolve_asset_id,
+    upsert_market_price,
+)
 from marketmind_ai.schemas import MarketPriceRecord
 from marketmind_ai.utils.logging_config import configure_logging
 
@@ -43,23 +47,6 @@ TARGET_TABLE = "market_data.t_market_prices"
 # retry con backoff esponenziale sui 429 sono le pratiche raccomandate
 # dalla community, non un requisito documentato dalla libreria stessa.
 _DELAY_BETWEEN_SYMBOLS = (1.0, 3.0)
-
-
-def get_universe_symbols() -> list[str]:
-    """Ticker su cui operano le pipeline — da `t_universe_members`, non hardcoded.
-
-    Include SPY (`is_benchmark=True`): il benchmark ha comunque bisogno dei
-    propri prezzi per l'equity curve, l'esclusione dal motore decisionale è
-    un filtro applicativo a valle, non di questa pipeline.
-    """
-    with get_session() as session:
-        return list(
-            session.execute(
-                select(Asset.symbol).join(
-                    UniverseMember, UniverseMember.asset_id == Asset.asset_id
-                )
-            ).scalars()
-        )
 
 
 @retry(
