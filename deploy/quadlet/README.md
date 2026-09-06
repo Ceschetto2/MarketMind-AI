@@ -35,3 +35,40 @@ scritto per restare riusabile anche da un futuro workflow GitHub Actions
 quando esisterà un target di produzione (server NixOS con
 `virtualisation.oci-containers`) — non ancora definito, vedi
 `Market Mind AI - Docs/Architettura/02_ci_cd.md` e `agenda.md`.
+
+## Pipeline di ingestion
+
+Le pipeline di ingestion condividono un'unica immagine Podman,
+`marketmind-ingestion`, costruita da `deploy/ingestion/Containerfile`
+(pacchetto `marketmind_ai` installato via `uv sync --frozen` da `uv.lock`,
+niente `pip install` a mano) — un solo `Containerfile` per tutte le otto
+pipeline previste, coerente con `Market Mind AI - Docs/pipelines/00_container_e_immagini.md`.
+L'isolamento tra pipeline è a livello di container Quadlet, uno per
+pipeline (stesso `Image=`, `Exec=` diverso), non di immagine:
+
+    podman build -t marketmind-ingestion:latest -f deploy/ingestion/Containerfile .
+
+`marketmind-ingest-yfinance-prices.container`/`.timer` sono la prima
+pipeline cablata su questo pattern (prezzi orari intraday →
+`market_data.t_market_prices`). Come `marketmind-db.container`, gira su
+`Network=marketmind.network` per raggiungere il database come
+`marketmind-db:5432` via il DNS integrato di Podman — non
+`127.0.0.1`/la porta pubblicata sull'host, che sono per due container
+distinti sulla stessa rete, non lo stesso host network. A differenza di
+`marketmind-db.container`, è `Type=oneshot` in `[Service]`: si avvia,
+esegue `Exec=python -m marketmind_ai.ingestion.yfinance_prices_pipeline`
+una volta ed esce — nessun loop/scheduler interno al container, il
+battito viene dal `.timer` accanto (`OnCalendar=hourly`, `Persistent=true`)
+o dal trigger manuale `deploy.sh --trigger yfinance-prices` (non ancora
+implementato in `deploy.sh`). La password del ruolo Postgres applicativo
+dedicato all'ingestion, `marketmind_ingestion`, arriva da
+`podman secret marketmind-ingestion-password` (non ancora creato — script
+di provisioning dei ruoli in lavorazione separatamente, vedi
+`Market Mind AI - Docs/db/03_utenti_db.md`); le altre variabili di
+connessione (`POSTGRES_HOST=marketmind-db`, `POSTGRES_PORT`,
+`POSTGRES_DB`, `POSTGRES_USER=marketmind_ingestion`) sono in chiaro via
+`Environment=`, coerenti con `marketmind-db.container`.
+
+Dettaglio completo di granularità pipeline/container, naming e cadenze in
+`Market Mind AI - Docs/pipelines/00_container_e_immagini.md` e
+`Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`.

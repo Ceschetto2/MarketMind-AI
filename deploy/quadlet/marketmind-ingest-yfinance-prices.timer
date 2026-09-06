@@ -1,0 +1,20 @@
+# Trigger primario della pipeline `yfinance-prices` — cadenza oraria,
+# coerente con la granularità intraday decisa per i prezzi (vedi
+# `Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`). Avvia
+# `marketmind-ingest-yfinance-prices.service`, lo stesso service oneshot
+# riusato dal trigger manuale `deploy.sh --trigger yfinance-prices`.
+#
+# `Persistent=true`: se la macchina è spenta/sospesa al momento in cui il
+# timer dovrebbe scattare, il giro mancato viene recuperato al prossimo
+# avvio invece di essere perso — utile in sviluppo locale, dove la macchina
+# non è sempre accesa.
+
+[Unit]
+Description=MarketMind AI — timer ingestion yfinance-prices (oraria)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

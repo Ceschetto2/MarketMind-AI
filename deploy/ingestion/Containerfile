@@ -1,0 +1,49 @@
+# Immagine unica condivisa da tutte le pipeline di ingestion
+# (`marketmind-ingestion`, vedi `Market Mind AI - Docs/pipelines/00_container_e_immagini.md`).
+# Un solo Containerfile, un solo pacchetto `marketmind_ai` installato:
+# l'isolamento tra pipeline è a livello di container Quadlet (uno per
+# pipeline, `Exec=` diverso), non di immagine — vedi
+# `deploy/quadlet/marketmind-ingest-yfinance-prices.container`.
+#
+# Build (dalla root del repo):
+#   podman build -t marketmind-ingestion:latest -f deploy/ingestion/Containerfile .
+
+FROM python:3.14-slim
+
+# `requires-python = "==3.14.*"` in pyproject.toml.
+
+# uv copiato come binario statico dall'immagine ufficiale astral, invece di
+# installarlo via pip dentro l'immagine finale — nessuna dipendenza di
+# build aggiuntiva, stesso pattern raccomandato da uv per immagini
+# Docker/OCI. Versione pinnata a quella compatibile con
+# `[build-system] requires = ["uv_build>=0.12.1,<0.13.0"]` in pyproject.toml.
+COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /uvx /usr/local/bin/
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:${PATH}"
+
+WORKDIR /app
+
+# Le dipendenze si installano da `uv.lock` (mai risolte a build time: build
+# riproducibili, coerenti col lock già tracciato in git) prima di copiare il
+# codice sorgente, così la cache Podman invalida questo layer solo quando
+# pyproject.toml/uv.lock cambiano, non a ogni modifica sotto src/.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Codice sorgente del pacchetto marketmind_ai (src-layout, vedi pyproject.toml).
+COPY src ./src
+RUN uv sync --frozen --no-dev
+
+# Nessun ENTRYPOINT/CMD in questa immagine: è condivisa da tutte e otto le
+# pipeline di ingestion, e il comando effettivo (`python -m
+# marketmind_ai.ingestion.<pipeline>_pipeline`) arriva per intero da `Exec=`
+# nel file Quadlet della singola pipeline (vedi
+# `deploy/quadlet/marketmind-ingest-yfinance-prices.container`). L'immagine
+# base (`python:3.14-slim`) non definisce un proprio ENTRYPOINT, solo un
+# `CMD` di default — `Exec=` lo sostituisce interamente, quindi un
+# `ENTRYPOINT ["python", "-m"]` qui duplicherebbe il `python -m` già
+# presente in `Exec=` invece di completarlo. "python" in `Exec=` risolve al
+# venv installato da `uv sync` sopra, grazie a `PATH` impostato qui.
+
