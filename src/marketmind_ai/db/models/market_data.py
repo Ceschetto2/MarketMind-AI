@@ -1,12 +1,15 @@
 """Tabelle dello schema `market_data`.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md` (vault Obsidian
-esterno al repo, percorso in CLAUDE.md). Le tabelle di ingestion (`t_assets`,
-`t_market_prices`, `t_news_events`, `t_macro_events`, `t_company_events`)
-non conoscono strutturalmente le fonti dati: la provenienza vive solo in
-`source`/`fetched_at`, e `raw_payload` in JSONB dove serve preservare il
-payload originale (non su `t_market_prices`, già completamente tipizzata).
+`Market Mind AI - Docs/db/01_schema_dati_er.md` (vault Obsidian esterno al
+repo, percorso in CLAUDE.md). Le tabelle di ingestion (`t_assets`,
+`t_market_prices`, `t_news_events`, `t_macro_events`, `t_company_events`,
+`t_universe_members`) non conoscono strutturalmente le fonti dati: la
+provenienza vive solo in `source`/`fetched_at`. Il payload grezzo completo
+(dove ha senso preservarlo, cioè su `t_news_events`/`t_company_events`) NON
+vive più qui: spostato in una tabella dedicata in un proprio schema, `raw`
+(`db/models/raw.py`), il 05-09-26 — ribalta la decisione precedente di
+tenerlo in JSONB inline (vedi `raw.py` per il razionale completo).
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Double,
     ForeignKey,
@@ -23,7 +27,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from marketmind_ai.db.base import Base
@@ -101,7 +105,6 @@ class NewsEvent(Base):
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     sentiment_score: Mapped[float | None] = mapped_column(Double)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
@@ -148,7 +151,6 @@ class CompanyEvent(Base):
     )
     ts: Mapped[date] = mapped_column(nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
@@ -160,4 +162,31 @@ class CompanyEvent(Base):
         ),
         Index("ib_company_events_asset_ts", "asset_id", "ts"),
         {"schema": SCHEMA},
+    )
+
+
+class UniverseMember(Base):
+    """Appartenenza all'universo osservato (~500 titoli + SPY benchmark).
+
+    FK verso `t_assets` con cardinalità opzionale (non tutti gli asset
+    devono avere una riga qui): un asset entra nell'universo solo se
+    presente nel seed `seeds/universe.csv`. `is_benchmark` distingue SPY
+    (`True`, incluso nell'ingestion prezzi/news per l'equity curve del
+    benchmark ma escluso dal motore decisionale) dal resto dell'universo
+    (`False`, il sottoinsieme su cui gira davvero il motore decisionale —
+    `WHERE is_benchmark = false`). Alimentata dalla pipeline di ingestion a
+    sé `universe-csv`, non da un'API esterna. Deciso il 30-08-26, chiude
+    agenda #31.
+    """
+
+    __tablename__ = "t_universe_members"
+    __table_args__ = {"schema": SCHEMA}
+
+    asset_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.t_assets.asset_id"), primary_key=True
+    )
+    is_benchmark: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
     )
