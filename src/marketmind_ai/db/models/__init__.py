@@ -16,6 +16,7 @@ from marketmind_ai.db.models.market_data import (
     MacroEvent,
     MarketPrice,
     NewsEvent,
+    UniverseMember,
 )
 from marketmind_ai.db.models.portfolio import (
     Portfolio,
@@ -23,6 +24,7 @@ from marketmind_ai.db.models.portfolio import (
     PortfolioPositionSnapshot,
     PortfolioSnapshot,
 )
+from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 
 __all__ = [
     "Asset",
@@ -30,6 +32,9 @@ __all__ = [
     "NewsEvent",
     "MacroEvent",
     "CompanyEvent",
+    "UniverseMember",
+    "NewsEventRaw",
+    "CompanyEventRaw",
     "ModelRun",
     "ModelDecision",
     "BacktestResult",
