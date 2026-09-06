@@ -10,13 +10,14 @@ sviluppo del modulo.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import delete, select
 
 from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, MarketPrice, UniverseMember
+from marketmind_ai.db.models.market_data import Asset, CompanyEvent, MarketPrice, NewsEvent, UniverseMember
+from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
 from marketmind_ai.db.writer import (
     AssetNotFoundError,
@@ -25,8 +26,15 @@ from marketmind_ai.db.writer import (
     resolve_or_create_asset,
     upsert_market_price,
     upsert_universe_member,
+    write_company_event,
+    write_news_event,
 )
-from marketmind_ai.schemas import MarketPriceRecord, UniverseMemberRecord
+from marketmind_ai.schemas import (
+    CompanyEventRecord,
+    MarketPriceRecord,
+    NewsEventRecord,
+    UniverseMemberRecord,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -169,6 +177,102 @@ class TestUpsertUniverseMember:
         )
         assert len(rows) == 1
         assert rows[0].is_benchmark is True
+
+
+def _news_record(**overrides) -> NewsEventRecord:
+    defaults = dict(
+        source="Finnhub",
+        ts=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+        symbol=None,
+        headline="Titolo di prova",
+        raw_payload={"raw": "payload"},
+        sentiment_score=None,
+        url="https://example.com/articolo-di-prova",
+        fetched_at=datetime.now(timezone.utc),
+    )
+    defaults.update(overrides)
+    return NewsEventRecord(**defaults)
+
+
+def _company_record(**overrides) -> CompanyEventRecord:
+    defaults = dict(
+        symbol="TESTX",
+        ts=date(2026, 1, 1),
+        event_type="earnings",
+        raw_payload={"raw": "payload"},
+        source="Finnhub",
+        fetched_at=datetime.now(timezone.utc),
+    )
+    defaults.update(overrides)
+    return CompanyEventRecord(**defaults)
+
+
+class TestWriteNewsEvent:
+    def test_insert_scrive_raffinata_e_raw(self, db_session):
+        write_news_event(db_session, None, _news_record())
+        db_session.flush()
+
+        refined = db_session.execute(
+            select(NewsEvent).where(NewsEvent.url == "https://example.com/articolo-di-prova")
+        ).scalar_one()
+        assert refined.headline == "Titolo di prova"
+        assert refined.asset_id is None
+
+        raw = db_session.get(NewsEventRaw, refined.news_event_id)
+        assert raw.raw_payload == {"raw": "payload"}
+
+    def test_upsert_su_stesso_url_aggiorna_non_duplica(self, db_session):
+        write_news_event(db_session, None, _news_record(headline="Prima versione"))
+        db_session.flush()
+        write_news_event(
+            db_session,
+            None,
+            _news_record(headline="Versione aggiornata", raw_payload={"v": 2}),
+        )
+        db_session.flush()
+
+        rows = db_session.execute(
+            select(NewsEvent).where(NewsEvent.url == "https://example.com/articolo-di-prova")
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].headline == "Versione aggiornata"
+
+        raw = db_session.get(NewsEventRaw, rows[0].news_event_id)
+        assert raw.raw_payload == {"v": 2}
+
+
+class TestWriteCompanyEvent:
+    def test_insert_scrive_raffinata_e_raw(self, db_session):
+        asset_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        write_company_event(db_session, asset_id, _company_record())
+        db_session.flush()
+
+        refined = db_session.execute(
+            select(CompanyEvent).where(CompanyEvent.asset_id == asset_id)
+        ).scalar_one()
+        assert refined.event_type == "earnings"
+
+        raw = db_session.get(CompanyEventRaw, refined.company_event_id)
+        assert raw.raw_payload == {"raw": "payload"}
+
+    def test_upsert_su_stessa_chiave_naturale_aggiorna_non_duplica(self, db_session):
+        asset_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        write_company_event(db_session, asset_id, _company_record(source="Finnhub"))
+        db_session.flush()
+        write_company_event(
+            db_session, asset_id, _company_record(source="FMP", raw_payload={"v": 2})
+        )
+        db_session.flush()
+
+        rows = db_session.execute(
+            select(CompanyEvent).where(CompanyEvent.asset_id == asset_id)
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].source == "FMP"
 
 
 class TestIngestionRun:

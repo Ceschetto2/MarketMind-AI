@@ -106,9 +106,15 @@ class TestRunEndToEnd:
     """`run()` scrive per davvero (le sue sessioni non passano dalla fixture
     `db_session`): setup/pulizia espliciti, come le verifiche manuali già
     fatte durante lo sviluppo di questa pipeline.
+
+    `get_universe_symbols()` è mockata per restituire solo il ticker di
+    prova: senza, il test spazzolerebbe anche l'universo reale (popolato
+    dalla pipeline `universe-csv`, non vuoto come quando questo test è
+    stato scritto) — un test non deve dipendere da cosa contiene per caso
+    l'ambiente in cui gira.
     """
 
-    def _cleanup(self) -> None:
+    def _cleanup(self, run_ids_before: set[int]) -> None:
         with get_session() as session:
             session.execute(
                 delete(MarketPrice).where(MarketPrice.asset_id == TEST_ASSET_ID)
@@ -117,13 +123,39 @@ class TestRunEndToEnd:
                 delete(UniverseMember).where(UniverseMember.asset_id == TEST_ASSET_ID)
             )
             session.execute(delete(Asset).where(Asset.asset_id == TEST_ASSET_ID))
-            session.execute(
-                delete(IngestionRun).where(
-                    IngestionRun.target_table == "market_data.t_market_prices"
+            # solo le righe di audit create da *questo* test, non l'intera
+            # storia di t_ingestion_runs per questa target_table (ci sono
+            # anche run reali, non di test, da non toccare).
+            new_run_ids = (
+                set(
+                    session.execute(
+                        select(IngestionRun.run_id).where(
+                            IngestionRun.target_table == "market_data.t_market_prices"
+                        )
+                    ).scalars()
                 )
+                - run_ids_before
             )
+            if new_run_ids:
+                session.execute(
+                    delete(IngestionRun).where(IngestionRun.run_id.in_(new_run_ids))
+                )
 
     def test_run_end_to_end(self, mocker):
+        mocker.patch(
+            "marketmind_ai.ingestion.yfinance_prices_pipeline.get_universe_symbols",
+            return_value=["TESTX"],
+        )
+
+        with get_session() as session:
+            run_ids_before = set(
+                session.execute(
+                    select(IngestionRun.run_id).where(
+                        IngestionRun.target_table == "market_data.t_market_prices"
+                    )
+                ).scalars()
+            )
+
         with get_session() as session:
             session.add(
                 Asset(
@@ -178,4 +210,4 @@ class TestRunEndToEnd:
                 assert audit_row.status == "success"
                 assert audit_row.rows_written == 2
         finally:
-            self._cleanup()
+            self._cleanup(run_ids_before)

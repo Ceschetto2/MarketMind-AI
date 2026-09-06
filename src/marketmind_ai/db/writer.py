@@ -24,9 +24,21 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, MarketPrice, UniverseMember
+from marketmind_ai.db.models.market_data import (
+    Asset,
+    CompanyEvent,
+    MarketPrice,
+    NewsEvent,
+    UniverseMember,
+)
+from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
-from marketmind_ai.schemas import MarketPriceRecord, UniverseMemberRecord
+from marketmind_ai.schemas import (
+    CompanyEventRecord,
+    MarketPriceRecord,
+    NewsEventRecord,
+    UniverseMemberRecord,
+)
 
 
 class AssetNotFoundError(LookupError):
@@ -137,6 +149,88 @@ def upsert_universe_member(
         },
     )
     session.execute(stmt)
+
+
+def write_news_event(
+    session: Session, asset_id: int | None, record: NewsEventRecord
+) -> None:
+    """Upsert su `market_data.t_news_events` (chiave naturale: `url`, `0006`)
+    + payload grezzo in `raw.t_news_events_raw` — un record validato produce
+    due insert nella stessa transazione, come da `00_schema_interfacce.md`.
+    """
+    stmt = pg_insert(NewsEvent).values(
+        asset_id=asset_id,
+        source=record.source,
+        ts=record.ts,
+        headline=record.headline,
+        url=record.url,
+        sentiment_score=record.sentiment_score,
+        fetched_at=record.fetched_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[NewsEvent.url],
+        set_={
+            "asset_id": stmt.excluded.asset_id,
+            "headline": stmt.excluded.headline,
+            "sentiment_score": stmt.excluded.sentiment_score,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    ).returning(NewsEvent.news_event_id)
+    news_event_id = session.execute(stmt).scalar_one()
+
+    raw_stmt = pg_insert(NewsEventRaw).values(
+        news_event_id=news_event_id,
+        source=record.source,
+        fetched_at=record.fetched_at,
+        raw_payload=record.raw_payload,
+    )
+    raw_stmt = raw_stmt.on_conflict_do_update(
+        index_elements=[NewsEventRaw.news_event_id],
+        set_={
+            "raw_payload": raw_stmt.excluded.raw_payload,
+            "fetched_at": raw_stmt.excluded.fetched_at,
+        },
+    )
+    session.execute(raw_stmt)
+
+
+def write_company_event(
+    session: Session, asset_id: int, record: CompanyEventRecord
+) -> None:
+    """Upsert su `market_data.t_company_events` (chiave naturale:
+    `(asset_id, ts, event_type)`, `0006`) + payload grezzo in
+    `raw.t_company_events_raw`.
+    """
+    stmt = pg_insert(CompanyEvent).values(
+        asset_id=asset_id,
+        ts=record.ts,
+        event_type=record.event_type,
+        source=record.source,
+        fetched_at=record.fetched_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[CompanyEvent.asset_id, CompanyEvent.ts, CompanyEvent.event_type],
+        set_={
+            "source": stmt.excluded.source,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    ).returning(CompanyEvent.company_event_id)
+    company_event_id = session.execute(stmt).scalar_one()
+
+    raw_stmt = pg_insert(CompanyEventRaw).values(
+        company_event_id=company_event_id,
+        source=record.source,
+        fetched_at=record.fetched_at,
+        raw_payload=record.raw_payload,
+    )
+    raw_stmt = raw_stmt.on_conflict_do_update(
+        index_elements=[CompanyEventRaw.company_event_id],
+        set_={
+            "raw_payload": raw_stmt.excluded.raw_payload,
+            "fetched_at": raw_stmt.excluded.fetched_at,
+        },
+    )
+    session.execute(raw_stmt)
 
 
 @dataclass
