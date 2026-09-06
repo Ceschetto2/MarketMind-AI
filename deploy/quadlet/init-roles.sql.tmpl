@@ -1,0 +1,72 @@
+-- Template SQL per i due ruoli Postgres applicativi (agenda #27, disegno
+-- completo in `Market Mind AI - Docs/db/03_utenti_db.md`).
+--
+-- Le due password sono sostituite in bash da deploy.sh (funzione
+-- init_db_roles) prima di essere inviate a psql via stdin: mai scritte su
+-- disco, mai passate come argomento di riga di comando a `podman`/`psql`
+-- (quindi mai visibili in `ps`, e mai in cronologia/log) — solo variable
+-- expansion nel processo bash che genera lo stream, poi un pipe diretto
+-- verso `podman exec -i ... psql`. Stesso principio del pattern già in uso
+-- per `marketmind-db-password` (`printf ... | podman secret create ... -`).
+--
+-- Idempotente: rilanciabile a piacere.
+--   - La CREATE ROLE avviene solo se il ruolo non esiste già (blocco DO).
+--   - La password viene SEMPRE riallineata con un ALTER ROLE separato,
+--     anche per un ruolo già esistente — stesso principio del fix del
+--     secret DB (agenda #28): mai "esiste già, non tocco".
+--   - I GRANT (schema/tabelle correnti + ALTER DEFAULT PRIVILEGES per le
+--     tabelle future) sono anch'essi idempotenti: rieseguirli non fallisce
+--     e non duplica nulla.
+--
+-- Eseguito come `marketmind` (superuser, lo stesso utente che applica le
+-- migrazioni Alembic): gli ALTER DEFAULT PRIVILEGES qui sotto non hanno
+-- bisogno di `FOR ROLE marketmind` esplicito, perché di default si
+-- applicano al ruolo che esegue lo statement — che è già `marketmind`.
+
+\set ON_ERROR_STOP on
+
+-- --- marketmind_ingestion: scrittura su market_data, raw, audit ---
+-- (script di ingestion: dati raffinati, payload grezzo, log operativo)
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'marketmind_ingestion') THEN
+        CREATE ROLE marketmind_ingestion LOGIN;
+    END IF;
+END
+$$;
+
+ALTER ROLE marketmind_ingestion WITH LOGIN PASSWORD '%%MARKETMIND_INGESTION_PASSWORD%%';
+
+GRANT USAGE ON SCHEMA market_data, raw, audit TO marketmind_ingestion;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA market_data TO marketmind_ingestion;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA raw TO marketmind_ingestion;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA audit TO marketmind_ingestion;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA market_data GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_ingestion;
+ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_ingestion;
+ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_ingestion;
+
+-- --- marketmind_app: scrittura su decisions + portfolio, lettura su market_data ---
+-- (decision engine, backtest, dashboard: non tocca i payload grezzi di raw)
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'marketmind_app') THEN
+        CREATE ROLE marketmind_app LOGIN;
+    END IF;
+END
+$$;
+
+ALTER ROLE marketmind_app WITH LOGIN PASSWORD '%%MARKETMIND_APP_PASSWORD%%';
+
+GRANT USAGE ON SCHEMA decisions, portfolio, market_data TO marketmind_app;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA decisions TO marketmind_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA portfolio TO marketmind_app;
+GRANT SELECT ON ALL TABLES IN SCHEMA market_data TO marketmind_app;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA decisions GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA portfolio GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA market_data GRANT SELECT ON TABLES TO marketmind_app;
