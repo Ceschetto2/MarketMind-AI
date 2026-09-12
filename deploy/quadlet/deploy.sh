@@ -43,9 +43,19 @@
 #   FRED_API_KEY                    fallback interattivo: sono chiavi di
 #   FMP_API_KEY                     terze parti, non password scelte da chi
 #                                    lancia il deploy) — già in .env/.env.example.
-#   MARKETMIND_QUADLET_DIR           dove linkare le unit (default
+#   MARKETMIND_QUADLET_DIR           dove linkare le unit Quadlet (.container/
+#                                    .network/.volume — default
 #                                    ~/.config/containers/systemd, la
-#                                    posizione che systemd --user si aspetta).
+#                                    posizione che il generatore Quadlet
+#                                    scansiona).
+#   MARKETMIND_SYSTEMD_USER_DIR      dove linkare le unit .timer (default
+#                                    ~/.config/systemd/user, la posizione che
+#                                    systemd --user carica direttamente per
+#                                    le unit non-Quadlet — un .timer piazzato
+#                                    nella directory Quadlet sopra non
+#                                    verrebbe mai processato, il generatore
+#                                    Quadlet capisce solo .container/
+#                                    .network/.volume/.kube/.pod).
 #
 # Nota su `--trigger`: esegue solo `systemctl --user start
 # marketmind-ingest-<pipeline>.service` ed esce — non rilinka le unit, non
@@ -65,6 +75,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 QUADLET_SRC="$REPO_ROOT/deploy/quadlet"
 QUADLET_DST="${MARKETMIND_QUADLET_DIR:-$HOME/.config/containers/systemd}"
+SYSTEMD_SRC="$REPO_ROOT/systemd"
+SYSTEMD_USER_DST="${MARKETMIND_SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
 DB_CONTAINER_NAME="marketmind-db"
 SERVICE_NAME="marketmind-db.service"
 ROLES_SQL_TEMPLATE="$QUADLET_SRC/init-roles.sql.tmpl"
@@ -87,26 +99,54 @@ fi
 command -v podman >/dev/null 2>&1 || fail "podman non trovato in PATH"
 command -v systemctl >/dev/null 2>&1 || fail "systemctl non trovato in PATH"
 
-# --- Unit Quadlet: glob dinamico, non lista fissa ---
-# Raccoglie automaticamente ogni .container/.timer/.network/.volume presente
-# in deploy/quadlet — comprese le future unit per pipeline di ingestion
-# (es. marketmind-ingest-yfinance-prices.{container,timer}) senza dover
-# editare questo script a ogni nuova pipeline.
-UNITS=()
+# --- Unit Quadlet (.container/.network/.volume): glob dinamico, non lista
+# fissa --- Raccoglie automaticamente ogni unit presente in deploy/quadlet
+# — comprese le future unit per pipeline di ingestion (es.
+# marketmind-ingest-yfinance-prices.container) senza dover editare questo
+# script a ogni nuova pipeline. I `.timer` NON sono qui: il generatore
+# Quadlet capisce solo .container/.network/.volume/.kube/.pod, un .timer in
+# questa directory non verrebbe mai processato (vedi `systemd/` sotto).
+QUADLET_UNITS=()
 shopt -s nullglob
-for pattern in '*.container' '*.timer' '*.network' '*.volume'; do
+for pattern in '*.container' '*.network' '*.volume'; do
     for f in "$QUADLET_SRC"/$pattern; do
-        UNITS+=("$(basename "$f")")
+        QUADLET_UNITS+=("$(basename "$f")")
     done
 done
 shopt -u nullglob
-[ "${#UNITS[@]}" -gt 0 ] || fail "nessuna unit Quadlet trovata in $QUADLET_SRC"
+[ "${#QUADLET_UNITS[@]}" -gt 0 ] || fail "nessuna unit Quadlet trovata in $QUADLET_SRC"
 
 log "linking unit Quadlet: $QUADLET_SRC -> $QUADLET_DST"
 mkdir -p "$QUADLET_DST"
-for unit in "${UNITS[@]}"; do
+for unit in "${QUADLET_UNITS[@]}"; do
     src="$QUADLET_SRC/$unit"
     dst="$QUADLET_DST/$unit"
+    if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
+        log "  $unit già collegata"
+    else
+        ln -sf "$src" "$dst"
+        log "  $unit collegata"
+    fi
+done
+
+# --- Unit .timer: directory separata, systemd/ non deploy/quadlet/ ---
+# systemd --user carica le unit non-Quadlet direttamente da
+# ~/.config/systemd/user — un .timer va linkato lì, non nella directory che
+# il generatore Quadlet scansiona (dove semplicemente verrebbe ignorato).
+# A differenza delle unit Quadlet (abilitate implicitamente dal generatore
+# al daemon-reload), un .timer va abilitato esplicitamente: `enable --now`.
+TIMER_UNITS=()
+shopt -s nullglob
+for f in "$SYSTEMD_SRC"/*.timer; do
+    TIMER_UNITS+=("$(basename "$f")")
+done
+shopt -u nullglob
+
+log "linking unit .timer: $SYSTEMD_SRC -> $SYSTEMD_USER_DST"
+mkdir -p "$SYSTEMD_USER_DST"
+for unit in "${TIMER_UNITS[@]}"; do
+    src="$SYSTEMD_SRC/$unit"
+    dst="$SYSTEMD_USER_DST/$unit"
     if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
         log "  $unit già collegata"
     else
@@ -158,6 +198,11 @@ store_secret marketmind-fmp-api-key FMP_API_KEY 0
 
 log "systemctl --user daemon-reload"
 systemctl --user daemon-reload
+
+for unit in "${TIMER_UNITS[@]}"; do
+    log "enable --now $unit"
+    systemctl --user enable --now "$unit"
+done
 
 if [ "${1:-}" = "--restart" ]; then
     log "restart $SERVICE_NAME"

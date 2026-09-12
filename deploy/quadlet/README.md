@@ -38,36 +38,52 @@ quando esisterà un target di produzione (server NixOS con
 
 ## Pipeline di ingestion
 
-Le pipeline di ingestion condividono un'unica immagine Podman,
+Le otto pipeline di ingestion (`yfinance-prices`, `yfinance-assets`,
+`gdelt-ngrams`, `finnhub-news`, `finnhub-earnings`, `fred`, `fmp`,
+`universe-csv`) condividono un'unica immagine Podman,
 `marketmind-ingestion`, costruita da `deploy/ingestion/Containerfile`
 (pacchetto `marketmind_ai` installato via `uv sync --frozen` da `uv.lock`,
-niente `pip install` a mano) — un solo `Containerfile` per tutte le otto
-pipeline previste, coerente con `Market Mind AI - Docs/pipelines/00_container_e_immagini.md`.
-L'isolamento tra pipeline è a livello di container Quadlet, uno per
-pipeline (stesso `Image=`, `Exec=` diverso), non di immagine:
+niente `pip install` a mano) — coerente con
+`Market Mind AI - Docs/pipelines/00_container_e_immagini.md`. L'isolamento
+tra pipeline è a livello di container Quadlet, uno per pipeline (stesso
+`Image=`, `Exec=` diverso), non di immagine:
 
     podman build -t marketmind-ingestion:latest -f deploy/ingestion/Containerfile .
 
-`marketmind-ingest-yfinance-prices.container`/`.timer` sono la prima
-pipeline cablata su questo pattern (prezzi orari intraday →
-`market_data.t_market_prices`). Come `marketmind-db.container`, gira su
+Ogni `marketmind-ingest-<pipeline>.container` gira su
 `Network=marketmind.network` per raggiungere il database come
 `marketmind-db:5432` via il DNS integrato di Podman — non
 `127.0.0.1`/la porta pubblicata sull'host, che sono per due container
 distinti sulla stessa rete, non lo stesso host network. A differenza di
 `marketmind-db.container`, è `Type=oneshot` in `[Service]`: si avvia,
-esegue `Exec=python -m marketmind_ai.ingestion.yfinance_prices_pipeline`
-una volta ed esce — nessun loop/scheduler interno al container, il
-battito viene dal `.timer` accanto (`OnCalendar=hourly`, `Persistent=true`)
-o dal trigger manuale `deploy.sh --trigger yfinance-prices` (non ancora
-implementato in `deploy.sh`). La password del ruolo Postgres applicativo
-dedicato all'ingestion, `marketmind_ingestion`, arriva da
-`podman secret marketmind-ingestion-password` (non ancora creato — script
-di provisioning dei ruoli in lavorazione separatamente, vedi
-`Market Mind AI - Docs/db/03_utenti_db.md`); le altre variabili di
-connessione (`POSTGRES_HOST=marketmind-db`, `POSTGRES_PORT`,
+esegue il proprio `Exec=python -m marketmind_ai.ingestion.<pipeline>_pipeline`
+una volta ed esce — nessun loop/scheduler interno al container. La password
+del ruolo Postgres applicativo dedicato all'ingestion, `marketmind_ingestion`,
+arriva da `podman secret marketmind-ingestion-password`; le altre variabili
+di connessione (`POSTGRES_HOST=marketmind-db`, `POSTGRES_PORT`,
 `POSTGRES_DB`, `POSTGRES_USER=marketmind_ingestion`) sono in chiaro via
-`Environment=`, coerenti con `marketmind-db.container`.
+`Environment=`, coerenti con `marketmind-db.container`. `finnhub-news`,
+`finnhub-earnings`, `fred` e `fmp` montano anche il rispettivo
+`podman secret marketmind-<fonte>-api-key`.
+
+**Il battito viene da un `.timer`, non da `deploy/quadlet/`**: le unit
+`.timer` (`marketmind-ingest-<pipeline>.timer`, una per pipeline tranne
+`fmp`, che non ne ha uno proprio — vedi sotto) vivono in `systemd/` a
+livello di root del repo, non qui — il generatore Quadlet che scansiona
+questa directory capisce solo `.container`/`.network`/`.volume`, un
+`.timer` piazzato qui non verrebbe mai processato. `deploy.sh` li linka
+in `~/.config/systemd/user/` (non `~/.config/containers/systemd/`) e li
+abilita esplicitamente (`systemctl --user enable --now`, a differenza
+delle unit Quadlet, abilitate implicitamente dal generatore). In
+alternativa al timer, ogni pipeline è triggerabile a mano con
+`deploy.sh --trigger <pipeline>`.
+
+`fmp` è l'eccezione: nessun `.timer` proprio — `marketmind-ingest-finnhub-earnings.container`
+ha `OnSuccess=marketmind-ingest-fmp.service` in `[Unit]`, quindi `fmp`
+parte automaticamente al completamento con successo di
+`finnhub-earnings` (vincolata dal budget di 250 richieste/giorno del
+piano free FMP, dettaglio in
+`Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`).
 
 Dettaglio completo di granularità pipeline/container, naming e cadenze in
 `Market Mind AI - Docs/pipelines/00_container_e_immagini.md` e
