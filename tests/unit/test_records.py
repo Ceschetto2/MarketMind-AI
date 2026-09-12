@@ -173,46 +173,6 @@ class TestCompanyEventRecord:
         )
         assert record.event_type == "earnings"
 
-    def test_identifying_fields_default_to_none_when_omitted(self):
-        """Solo FMP li fornisce (Finnhub earnings calendar non li ha) —
-        opzionali, non obbligatori."""
-        record = CompanyEventRecord(
-            symbol="AAPL",
-            ts=date(2026, 8, 1),
-            event_type="earnings",
-            raw_payload={"eps": 1.5},
-            source="finnhub",
-            fetched_at=FETCHED_AT,
-        )
-        assert record.fiscal_year is None
-        assert record.period is None
-        assert record.reported_currency is None
-        assert record.cik is None
-        assert record.filing_date is None
-        assert record.accepted_date is None
-
-    def test_identifying_fields_valid_when_provided(self):
-        record = CompanyEventRecord(
-            symbol="AAPL",
-            ts=date(2026, 6, 30),
-            event_type="earnings",
-            raw_payload={"revenue": 90_000_000_000},
-            source="FMP",
-            fetched_at=FETCHED_AT,
-            fiscal_year="2026",
-            period="Q3",
-            reported_currency="USD",
-            cik="0000320193",
-            filing_date=date(2026, 7, 20),
-            accepted_date=date(2026, 7, 20),
-        )
-        assert record.fiscal_year == "2026"
-        assert record.period == "Q3"
-        assert record.reported_currency == "USD"
-        assert record.cik == "0000320193"
-        assert record.filing_date == date(2026, 7, 20)
-        assert record.accepted_date == date(2026, 7, 20)
-
     def test_missing_required_field_raises(self):
         with pytest.raises(ValidationError):
             CompanyEventRecord(
@@ -229,28 +189,11 @@ class TestCompanyEventRecord:
             CompanyEventRecord(
                 symbol="AAPL",
                 ts=date(2026, 8, 1),
-                event_type="bankruptcy",  # non nel Literal
+                event_type="bankruptcy",  # non in Literal["earnings", "dividend", "split"]
                 raw_payload={},
                 source="finnhub",
                 fetched_at=FETCHED_AT,
             )
-
-    @pytest.mark.parametrize(
-        "event_type", ["earnings", "income_statement", "balance_sheet", "cash_flow", "dividend", "split"]
-    )
-    def test_all_literal_values_are_valid(self, event_type):
-        """`income_statement`/`balance_sheet`/`cash_flow` distinguono i tre
-        bilanci FMP, che condividevano `event_type='earnings'` e collidevano
-        sulla stessa chiave se riferiti alla stessa data."""
-        record = CompanyEventRecord(
-            symbol="AAPL",
-            ts=date(2026, 8, 1),
-            event_type=event_type,
-            raw_payload={},
-            source="FMP",
-            fetched_at=FETCHED_AT,
-        )
-        assert record.event_type == event_type
 
 
 class TestUniverseMemberRecord:

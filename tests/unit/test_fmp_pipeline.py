@@ -29,21 +29,10 @@ def _make_statement(**overrides) -> dict:
         "cik": "0000320193",
         "fiscalYear": "2026",
         "period": "Q3",
-        "filingDate": "2026-07-20",
-        "acceptedDate": "2026-07-20",
         "revenue": 90_000_000_000,
     }
     statement.update(overrides)
     return statement
-
-
-def _make_dividend_or_split(**overrides) -> dict:
-    """`dividends`/`splits` non hanno i campi identificativi dei bilanci
-    (nessun `fiscalYear`/`cik`/...) — payload realistico per verificare che
-    `_statements_to_record` non fallisca sulla loro assenza."""
-    payload = {"date": "2026-09-14", "symbol": "AAPL"}
-    payload.update(overrides)
-    return payload
 
 
 class TestLatestRecord:
@@ -70,12 +59,9 @@ class TestStatementsToRecord:
     @pytest.mark.parametrize(
         ("endpoint_key", "expected_event_type"),
         [
-            # income/balance/cash-flow-statement hanno event_type distinti,
-            # non tutti "earnings" — altrimenti collidono sulla stessa
-            # chiave se riferiti alla stessa data (agenda #54).
-            ("income-statement", "income_statement"),
-            ("balance-sheet-statement", "balance_sheet"),
-            ("cash-flow-statement", "cash_flow"),
+            ("income-statement", "earnings"),
+            ("balance-sheet-statement", "earnings"),
+            ("cash-flow-statement", "earnings"),
             ("dividends", "dividend"),
             ("splits", "split"),
         ],
@@ -90,44 +76,7 @@ class TestStatementsToRecord:
         assert record.ts == date(2026, 6, 30)
         assert record.event_type == expected_event_type
         assert record.source == SOURCE
-
-    def test_extracts_identifying_fields_for_financial_statements(self):
-        """`fiscal_year`/`period`/`reported_currency`/`cik`/`filing_date`/
-        `accepted_date` — comuni ai tre bilanci, non ai dividendi/split."""
-        statement = _make_statement()
-
-        record = _statements_to_record("AAPL", "income-statement", statement)
-
-        assert record.fiscal_year == "2026"
-        assert record.period == "Q3"
-        assert record.reported_currency == "USD"
-        assert record.cik == "0000320193"
-        assert record.filing_date == date(2026, 7, 20)
-        assert record.accepted_date == date(2026, 7, 20)
-
-    def test_identifying_fields_none_for_dividends_and_splits(self):
-        """Payload realistico senza quei campi: `_statements_to_record` non
-        deve sollevare (uso di `.get()`, non accesso diretto a chiave)."""
-        record = _statements_to_record(
-            "AAPL", "dividends", _make_dividend_or_split(dividend=0.25)
-        )
-
-        assert record.fiscal_year is None
-        assert record.period is None
-        assert record.reported_currency is None
-        assert record.cik is None
-        assert record.filing_date is None
-        assert record.accepted_date is None
-
-    def test_accepted_date_with_time_component_is_truncated_to_date(self):
-        """`acceptedDate` reale da FMP porta un timestamp
-        (`"2025-10-31 06:01:26"`), non solo la data — la componente oraria
-        non viene preservata in questa colonna di comodo (documentato)."""
-        statement = _make_statement(acceptedDate="2025-10-31 06:01:26")
-
-        record = _statements_to_record("AAPL", "income-statement", statement)
-
-        assert record.accepted_date == date(2025, 10, 31)
+        assert record.raw_payload == statement
 
 
 class TestFetchEndpointRetry:

@@ -93,40 +93,14 @@ class MacroEventRecord(BaseModel):
 class CompanyEventRecord(BaseModel):
     """Evento societario, alimentato da Finnhub (`/calendar/earnings`) e FMP
     (bilanci, dividendi, split).
-
-    `income_statement`/`balance_sheet`/`cash_flow` sono i tre bilanci FMP
-    con `event_type` distinti, non tutti `'earnings'`: condividere lo
-    stesso valore li faceva collidere sulla stessa chiave `(asset_id, ts,
-    event_type, source)` quando riferiti alla stessa data (probabile, un
-    bilancio deposita i tre statement insieme per lo stesso periodo) — un
-    upsert scriveva silenziosamente sopra i primi due, perdendo bilancio
-    patrimoniale e conto economico. `earnings` resta il valore esclusivo di
-    Finnhub (`/calendar/earnings`).
-
-    I sei campi identificativi opzionali (`fiscal_year`, `period`,
-    `reported_currency`, `cik`, `filing_date`, `accepted_date`) sono comuni
-    ai tre bilanci FMP — utili per query dirette senza dover scavare in
-    `raw_payload`. Solo FMP li fornisce: rimangono `None` per gli eventi
-    Finnhub (`/calendar/earnings` non ha un concetto equivalente — il suo
-    `quarter`/`year` numerico non è la stessa cosa del `period`/
-    `fiscalYear` testuale di FMP, non forziamo una falsa equivalenza) e per
-    dividendi/split FMP (che non hanno bilancio associato).
     """
 
     symbol: str
     ts: date
-    event_type: Literal[
-        "earnings", "income_statement", "balance_sheet", "cash_flow", "dividend", "split"
-    ]
+    event_type: Literal["earnings", "dividend", "split"]
     raw_payload: dict
     source: str
     fetched_at: datetime
-    fiscal_year: Optional[str] = None
-    period: Optional[str] = None
-    reported_currency: Optional[str] = None
-    cik: Optional[str] = None
-    filing_date: Optional[date] = None
-    accepted_date: Optional[date] = None
 
 
 class UniverseMemberRecord(BaseModel):
