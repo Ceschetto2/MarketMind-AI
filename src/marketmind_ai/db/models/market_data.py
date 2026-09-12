@@ -148,10 +148,12 @@ class MacroEvent(Base):
 class CompanyEvent(Base):
     """Eventi societari (Finnhub `/calendar/earnings`, FMP bilanci/dividendi/split).
 
-    `(asset_id, ts, event_type)` unico (`0006`): chiave naturale di
-    deduplicazione — un solo evento di un dato tipo per asset per giorno,
-    assunzione ragionevole non garantita in modo assoluto dal dominio ma
-    sufficiente per l'upsert idempotente delle pipeline.
+    `(asset_id, ts, event_type, source)` unico (`0006`, `source` aggiunta in
+    `0007`): un solo evento di un dato tipo per asset per giorno *per
+    fonte* — Finnhub e FMP possono scrivere entrambi `event_type='earnings'`
+    per lo stesso asset alla stessa data (earnings calendar vs bilancio
+    trimestrale) e convivono come righe distinte, invece che l'ultima
+    sovrascriva l'altra (agenda #52).
     """
 
     __tablename__ = "t_company_events"
@@ -171,7 +173,7 @@ class CompanyEvent(Base):
         CheckConstraint(
             "event_type IN ('earnings', 'dividend', 'split')", name="event_type"
         ),
-        UniqueConstraint("asset_id", "ts", "event_type"),
+        UniqueConstraint("asset_id", "ts", "event_type", "source"),
         Index("ib_company_events_asset_ts", "asset_id", "ts"),
         {"schema": SCHEMA},
     )

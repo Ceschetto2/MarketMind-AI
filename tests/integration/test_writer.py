@@ -310,7 +310,32 @@ class TestWriteCompanyEvent:
         raw = db_session.get(CompanyEventRaw, refined.company_event_id)
         assert raw.raw_payload == {"raw": "payload"}
 
-    def test_upsert_su_stessa_chiave_naturale_aggiorna_non_duplica(self, db_session):
+    def test_upsert_su_stessa_fonte_aggiorna_non_duplica(self, db_session):
+        """Chiave di unicità `(asset_id, ts, event_type, source)` — `source`
+        inclusa (agenda #52): una riesecuzione della *stessa* pipeline sulla
+        stessa finestura aggiorna la propria riga, non ne crea una seconda."""
+        asset_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        write_company_event(db_session, asset_id, _company_record(source="Finnhub"))
+        db_session.flush()
+        write_company_event(
+            db_session, asset_id, _company_record(source="Finnhub", raw_payload={"v": 2})
+        )
+        db_session.flush()
+
+        rows = db_session.execute(
+            select(CompanyEvent).where(CompanyEvent.asset_id == asset_id)
+        ).scalars().all()
+        assert len(rows) == 1
+        raw = db_session.get(CompanyEventRaw, rows[0].company_event_id)
+        assert raw.raw_payload == {"v": 2}
+
+    def test_fonti_diverse_stesso_evento_convivono(self, db_session):
+        """Con `source` nella chiave, Finnhub e FMP che scrivono lo stesso
+        `event_type='earnings'` per lo stesso asset alla stessa data
+        convivono come righe distinte, invece che la seconda sovrascriva la
+        prima (bug scoperto e chiuso in agenda #52)."""
         asset_id = _make_asset(db_session, symbol="TESTX")
         db_session.flush()
 
@@ -324,8 +349,8 @@ class TestWriteCompanyEvent:
         rows = db_session.execute(
             select(CompanyEvent).where(CompanyEvent.asset_id == asset_id)
         ).scalars().all()
-        assert len(rows) == 1
-        assert rows[0].source == "FMP"
+        assert len(rows) == 2
+        assert {row.source for row in rows} == {"Finnhub", "FMP"}
 
 
 class TestGetUniverseSymbols:

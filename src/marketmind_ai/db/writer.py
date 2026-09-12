@@ -275,8 +275,13 @@ def write_company_event(
     session: Session, asset_id: int, record: CompanyEventRecord
 ) -> None:
     """Upsert su `market_data.t_company_events` (chiave naturale:
-    `(asset_id, ts, event_type)`, `0006`) + payload grezzo in
-    `raw.t_company_events_raw`.
+    `(asset_id, ts, event_type, source)`, `0007`) + payload grezzo in
+    `raw.t_company_events_raw`. `source` è nella chiave di conflitto, non
+    solo un campo aggiornato: Finnhub e FMP possono scrivere lo stesso
+    `(asset_id, ts, event_type)` (es. earnings calendar vs bilancio) e
+    convivono come righe distinte, invece che l'ultima sovrascriva l'altra
+    (agenda #52) — l'upsert scatta solo su una riesecuzione della *stessa*
+    fonte sulla stessa finestra.
     """
     stmt = pg_insert(CompanyEvent).values(
         asset_id=asset_id,
@@ -286,11 +291,13 @@ def write_company_event(
         fetched_at=record.fetched_at,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[CompanyEvent.asset_id, CompanyEvent.ts, CompanyEvent.event_type],
-        set_={
-            "source": stmt.excluded.source,
-            "fetched_at": stmt.excluded.fetched_at,
-        },
+        index_elements=[
+            CompanyEvent.asset_id,
+            CompanyEvent.ts,
+            CompanyEvent.event_type,
+            CompanyEvent.source,
+        ],
+        set_={"fetched_at": stmt.excluded.fetched_at},
     ).returning(CompanyEvent.company_event_id)
     company_event_id = session.execute(stmt).scalar_one()
 
