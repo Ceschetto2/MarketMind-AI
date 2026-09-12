@@ -1,0 +1,28 @@
+# Quadlet Podman rootless per la pipeline di ingestion `finnhub-news`
+# (company news recenti → `market_data.t_news_events`), sulla stessa
+# immagine condivisa `marketmind-ingestion`.
+#
+# `Secret=marketmind-finnhub-api-key` è la chiave API Finnhub (creata da
+# deploy.sh da FINNHUB_API_KEY in .env) — a differenza di yfinance/GDELT,
+# questa fonte richiede una registrazione.
+
+[Unit]
+Description=MarketMind AI — ingestion finnhub-news (company news)
+
+[Container]
+Image=localhost/marketmind-ingestion:latest
+ContainerName=marketmind-ingest-finnhub-news
+Network=marketmind.network
+Exec=python -m marketmind_ai.ingestion.finnhub_news_pipeline
+Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
+Secret=marketmind-finnhub-api-key,type=env,target=FINNHUB_API_KEY
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_ingestion
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

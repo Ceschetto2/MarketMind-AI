@@ -1,0 +1,13 @@
+# Trigger primario della pipeline `finnhub-news` — cadenza oraria: un giro
+# completo sui ~500 asset richiede ≥9 min a 60 richieste/min, va spalmato
+# su più cicli, non tentato in un'unica passata (Data Providers/03_finnhub_onboarding.md).
+
+[Unit]
+Description=MarketMind AI — timer ingestion finnhub-news (oraria)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
