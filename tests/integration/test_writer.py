@@ -377,8 +377,14 @@ class TestUpsertMacroEvent:
         )
         db_session.flush()
 
+        # filtrato anche su `ts`, non solo `indicator`: la tabella può già
+        # contenere osservazioni reali per lo stesso indicatore con altre
+        # date (scritte dalla pipeline `fred` in produzione) — un test non
+        # deve dipendere da cosa contiene per caso l'ambiente in cui gira.
         rows = db_session.execute(
-            select(MacroEvent).where(MacroEvent.indicator == "UNRATE")
+            select(MacroEvent).where(
+                MacroEvent.indicator == "UNRATE", MacroEvent.ts == date(2026, 1, 1)
+            )
         ).scalars().all()
         assert len(rows) == 1
         assert rows[0].value == 3.6
