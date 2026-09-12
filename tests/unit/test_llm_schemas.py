@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from marketmind_ai.llm.schemas import Decision
+from marketmind_ai.llm.schemas import Decision, DeferralRequest
 
 
 class TestDecision:
@@ -27,6 +27,11 @@ class TestDecision:
         assert decision.confidence is None
         assert decision.reasoning is None
 
+    def test_defer_defaults_to_none(self):
+        decision = Decision(decision="HOLD")
+
+        assert decision.defer is None
+
     def test_rejects_decision_outside_enum(self):
         with pytest.raises(ValidationError):
             Decision(decision="BUY_A_LOT")
@@ -35,3 +40,37 @@ class TestDecision:
     def test_rejects_confidence_outside_unit_interval(self, confidence):
         with pytest.raises(ValidationError):
             Decision(decision="SELL", confidence=confidence)
+
+
+class TestDeferralRequest:
+    def test_valid_construction_with_refresh_hints(self):
+        defer = DeferralRequest(
+            retry_after_minutes=15,
+            refresh_pipeline="finnhub-news",
+            refresh_symbol="AAPL",
+        )
+
+        assert defer.retry_after_minutes == 15
+        assert defer.refresh_pipeline == "finnhub-news"
+        assert defer.refresh_symbol == "AAPL"
+
+    def test_refresh_hints_default_to_none(self):
+        defer = DeferralRequest(retry_after_minutes=30)
+
+        assert defer.refresh_pipeline is None
+        assert defer.refresh_symbol is None
+
+    @pytest.mark.parametrize("retry_after_minutes", [0, -5])
+    def test_rejects_non_positive_delay(self, retry_after_minutes):
+        with pytest.raises(ValidationError):
+            DeferralRequest(retry_after_minutes=retry_after_minutes)
+
+    def test_decision_accepts_defer(self):
+        decision = Decision(
+            decision="HOLD",
+            reasoning="in attesa dell'annuncio earnings",
+            defer=DeferralRequest(retry_after_minutes=15, refresh_pipeline="finnhub-news"),
+        )
+
+        assert decision.defer.retry_after_minutes == 15
+        assert decision.defer.refresh_pipeline == "finnhub-news"
