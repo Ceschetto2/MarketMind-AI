@@ -127,10 +127,49 @@ class TestRunEndToEnd:
         finally:
             self._cleanup()
 
-    def test_run_nessun_file_pubblicato_non_fallisce(self, mocker):
+    def test_run_nessun_file_pubblicato_traccia_comunque_lesecuzione(self, mocker):
+        """`t_ingestion_runs` traccia ogni esecuzione (`db/01_schema_dati_er.md`),
+        non solo quelle che trovano dati — altrimenti non c'è modo di
+        distinguere "nessun file pubblicato in questo giro" (normale) da
+        "la pipeline non gira mai" (un problema reale)."""
+        with get_session() as session:
+            run_ids_before = set(
+                session.execute(
+                    select(IngestionRun.run_id).where(
+                        IngestionRun.target_table == "market_data.t_news_events"
+                    )
+                ).scalars()
+            )
+
         mocker.patch(
             "marketmind_ai.ingestion.gdelt_ngrams_pipeline._download_gz",
             return_value=None,
         )
 
-        run()  # non deve sollevare
+        try:
+            run()  # non deve sollevare
+
+            with get_session() as session:
+                audit_row = session.execute(
+                    select(IngestionRun)
+                    .where(IngestionRun.target_table == "market_data.t_news_events")
+                    .order_by(IngestionRun.run_id.desc())
+                ).scalars().first()
+                assert audit_row.status == "success"
+                assert audit_row.rows_written == 0
+        finally:
+            with get_session() as session:
+                new_run_ids = (
+                    set(
+                        session.execute(
+                            select(IngestionRun.run_id).where(
+                                IngestionRun.target_table == "market_data.t_news_events"
+                            )
+                        ).scalars()
+                    )
+                    - run_ids_before
+                )
+                if new_run_ids:
+                    session.execute(
+                        delete(IngestionRun).where(IngestionRun.run_id.in_(new_run_ids))
+                    )

@@ -185,25 +185,32 @@ def run() -> None:
     universe = _universe_names_and_symbols()
     now = datetime.now(timezone.utc)
 
-    ngrams_text = toc_text = None
-    for ts in _candidate_timestamps(now):
-        ngrams_text = _download_gz(f"{_BASE_URL}/{ts}.ngrams.txt.gz")
-        if ngrams_text is None:
-            continue
-        toc_text = _download_gz(f"{_BASE_URL}/{ts}.toc.json.gz")
-        break
-
-    if ngrams_text is None:
-        logger.info("nessun file pubblicato nella finestra di candidati, nulla da fare")
-        return
-
-    ngrams = _parse_ngrams(ngrams_text)
-    toc = _parse_toc(toc_text or "")
-    docid_to_symbol = _link_docids_to_symbols(ngrams, universe)
-    records = _build_records(toc, docid_to_symbol)
-    logger.info("%d righe ngrams, %d articoli linkati all'universo", len(ngrams), len(records))
-
+    # La scoperta del file (compreso il caso "nessun minuto pubblicato in
+    # questa finestra") resta dentro `ingestion_run`: `t_ingestion_runs`
+    # traccia ogni esecuzione, non solo quelle che trovano dati — altrimenti
+    # non c'è modo di distinguere un giro normale senza file pubblicato da
+    # una pipeline che non gira mai (`db/01_schema_dati_er.md`).
     with ingestion_run(AUDIT_SOURCE, TARGET_TABLE) as tracker:
+        ngrams_text = toc_text = None
+        for ts in _candidate_timestamps(now):
+            ngrams_text = _download_gz(f"{_BASE_URL}/{ts}.ngrams.txt.gz")
+            if ngrams_text is None:
+                continue
+            toc_text = _download_gz(f"{_BASE_URL}/{ts}.toc.json.gz")
+            break
+
+        if ngrams_text is None:
+            logger.info("nessun file pubblicato nella finestra di candidati, nulla da fare")
+            return
+
+        ngrams = _parse_ngrams(ngrams_text)
+        toc = _parse_toc(toc_text or "")
+        docid_to_symbol = _link_docids_to_symbols(ngrams, universe)
+        records = _build_records(toc, docid_to_symbol)
+        logger.info(
+            "%d righe ngrams, %d articoli linkati all'universo", len(ngrams), len(records)
+        )
+
         with get_session() as session:
             for record in records:
                 try:
