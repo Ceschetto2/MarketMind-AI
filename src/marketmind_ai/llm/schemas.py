@@ -29,7 +29,11 @@ class DeferralRequest(BaseModel):
     accetterà davvero resta da definire pipeline per pipeline.
     """
 
-    retry_after_minutes: int = Field(gt=0)
+    # ge=1, non gt=0: gt genera "exclusiveMinimum" nel JSON Schema, non
+    # supportato dal sottoinsieme che Gemini accetta come response_schema
+    # (ValidationError lato SDK, scoperto in un test end-to-end reale) — per
+    # un intero positivo ge=1 è equivalente e genera "minimum", supportato.
+    retry_after_minutes: int = Field(ge=1)
     refresh_pipeline: Optional[str] = None
     refresh_symbol: Optional[str] = None
 

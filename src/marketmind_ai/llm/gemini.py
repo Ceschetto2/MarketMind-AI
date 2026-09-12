@@ -26,7 +26,10 @@ from marketmind_ai.llm.schemas import Decision
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "gemini-2.5-flash"
+# gemini-2.5-flash non è più disponibile ai nuovi utenti (404 dall'API,
+# scoperto in un test end-to-end reale, non dai test a priori — mockano il
+# client, non convalidano il nome modello contro l'API vera).
+_DEFAULT_MODEL = "gemini-3.6-flash"
 
 _SYSTEM_PROMPT = (
     "Sei il motore decisionale di una piattaforma di simulazione finanziaria. "
