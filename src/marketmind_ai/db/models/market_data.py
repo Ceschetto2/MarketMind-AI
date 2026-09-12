@@ -168,10 +168,18 @@ class CompanyEvent(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
+    fiscal_year: Mapped[str | None] = mapped_column(Text)
+    period: Mapped[str | None] = mapped_column(Text)
+    reported_currency: Mapped[str | None] = mapped_column(Text)
+    cik: Mapped[str | None] = mapped_column(Text)
+    filing_date: Mapped[date | None] = mapped_column()
+    accepted_date: Mapped[date | None] = mapped_column()
 
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('earnings', 'dividend', 'split')", name="event_type"
+            "event_type IN ('earnings', 'income_statement', 'balance_sheet', "
+            "'cash_flow', 'dividend', 'split')",
+            name="event_type",
         ),
         UniqueConstraint("asset_id", "ts", "event_type", "source"),
         Index("ib_company_events_asset_ts", "asset_id", "ts"),
