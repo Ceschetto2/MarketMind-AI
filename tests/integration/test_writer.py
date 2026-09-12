@@ -32,6 +32,7 @@ from marketmind_ai.db.writer import (
     ingestion_run,
     resolve_asset_id,
     resolve_or_create_asset,
+    upsert_asset,
     upsert_macro_event,
     upsert_market_price,
     upsert_universe_member,
@@ -39,6 +40,7 @@ from marketmind_ai.db.writer import (
     write_news_event,
 )
 from marketmind_ai.schemas import (
+    AssetRecord,
     CompanyEventRecord,
     MacroEventRecord,
     MarketPriceRecord,
@@ -139,6 +141,47 @@ def _universe_record(symbol: str, **overrides) -> UniverseMemberRecord:
     )
     defaults.update(overrides)
     return UniverseMemberRecord(**defaults)
+
+
+class TestUpsertAsset:
+    def test_insert_nuovo_asset(self, db_session):
+        record = AssetRecord(
+            symbol="TESTX",
+            name="Test Asset",
+            sector="Technology",
+            asset_type="equity",
+            source="yfinance",
+            fetched_at=datetime.now(timezone.utc),
+        )
+
+        asset_id = upsert_asset(db_session, record)
+        db_session.flush()
+
+        row = db_session.get(Asset, asset_id)
+        assert row.symbol == "TESTX"
+        assert row.name == "Test Asset"
+
+    def test_upsert_aggiorna_anagrafica_esistente(self, db_session):
+        asset_id = _make_asset(db_session, symbol="TESTX")
+        db_session.flush()
+
+        updated_id = upsert_asset(
+            db_session,
+            AssetRecord(
+                symbol="TESTX",
+                name="Nome aggiornato",
+                sector="Healthcare",
+                asset_type="equity",
+                source="yfinance",
+                fetched_at=datetime.now(timezone.utc),
+            ),
+        )
+        db_session.flush()
+
+        assert updated_id == asset_id
+        row = db_session.get(Asset, asset_id)
+        assert row.name == "Nome aggiornato"
+        assert row.sector == "Healthcare"
 
 
 class TestResolveOrCreateAsset:

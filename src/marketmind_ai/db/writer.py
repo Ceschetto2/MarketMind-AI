@@ -35,6 +35,7 @@ from marketmind_ai.db.models.market_data import (
 from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 from marketmind_ai.db.session import get_session
 from marketmind_ai.schemas import (
+    AssetRecord,
     CompanyEventRecord,
     MacroEventRecord,
     MarketPriceRecord,
@@ -70,6 +71,35 @@ def get_universe_symbols() -> list[str]:
                 )
             ).scalars()
         )
+
+
+def upsert_asset(session: Session, record: AssetRecord) -> int:
+    """Upsert idempotente su `market_data.t_assets` (chiave naturale già in
+    schema: `symbol`, `uq_t_assets_symbol`). Usata dalla pipeline
+    `yfinance-assets` per mantenere l'anagrafica aggiornata — a differenza
+    di `resolve_or_create_asset` (che crea solo se manca, per non
+    sovrascrivere dati più freschi), qui l'aggiornamento è lo scopo stesso
+    della pipeline.
+    """
+    stmt = pg_insert(Asset).values(
+        symbol=record.symbol,
+        name=record.name,
+        sector=record.sector,
+        asset_type=record.asset_type,
+        source=record.source,
+        fetched_at=record.fetched_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[Asset.symbol],
+        set_={
+            "name": stmt.excluded.name,
+            "sector": stmt.excluded.sector,
+            "asset_type": stmt.excluded.asset_type,
+            "source": stmt.excluded.source,
+            "fetched_at": stmt.excluded.fetched_at,
+        },
+    ).returning(Asset.asset_id)
+    return session.execute(stmt).scalar_one()
 
 
 def resolve_asset_id(session: Session, symbol: str) -> int:
