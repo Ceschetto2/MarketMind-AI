@@ -70,9 +70,12 @@ class TestStatementsToRecord:
     @pytest.mark.parametrize(
         ("endpoint_key", "expected_event_type"),
         [
-            ("income-statement", "earnings"),
-            ("balance-sheet-statement", "earnings"),
-            ("cash-flow-statement", "earnings"),
+            # income/balance/cash-flow-statement hanno event_type distinti,
+            # non tutti "earnings" — altrimenti collidono sulla stessa
+            # chiave se riferiti alla stessa data (agenda #54).
+            ("income-statement", "income_statement"),
+            ("balance-sheet-statement", "balance_sheet"),
+            ("cash-flow-statement", "cash_flow"),
             ("dividends", "dividend"),
             ("splits", "split"),
         ],

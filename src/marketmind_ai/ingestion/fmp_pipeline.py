@@ -41,9 +41,14 @@ _BASE_URL = "https://financialmodelingprep.com/stable"
 
 # endpoint -> event_type (00_schema_interfacce.md, CompanyEventRecord.event_type)
 ENDPOINTS = {
-    "income-statement": "earnings",
-    "balance-sheet-statement": "earnings",
-    "cash-flow-statement": "earnings",
+    # Tre event_type distinti, non tutti "earnings": condividere lo stesso
+    # valore li faceva collidere sulla stessa chiave (asset_id, ts,
+    # event_type, source) quando riferiti alla stessa data — un bilancio
+    # deposita i tre statement insieme per lo stesso periodo, quindi la
+    # collisione era la norma, non un caso raro (agenda #54).
+    "income-statement": "income_statement",
+    "balance-sheet-statement": "balance_sheet",
+    "cash-flow-statement": "cash_flow",
     "dividends": "dividend",
     "splits": "split",
 }

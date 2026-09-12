@@ -77,7 +77,9 @@ class TestRunEndToEnd:
                 # scrivibile per un ticker reale come AAPL.
                 assert len(fmp_rows) > 0
                 assert {row.event_type for row in fmp_rows} <= {
-                    "earnings",
+                    "income_statement",
+                    "balance_sheet",
+                    "cash_flow",
                     "dividend",
                     "split",
                 }

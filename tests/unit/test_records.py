@@ -229,11 +229,28 @@ class TestCompanyEventRecord:
             CompanyEventRecord(
                 symbol="AAPL",
                 ts=date(2026, 8, 1),
-                event_type="bankruptcy",  # non in Literal["earnings", "dividend", "split"]
+                event_type="bankruptcy",  # non nel Literal
                 raw_payload={},
                 source="finnhub",
                 fetched_at=FETCHED_AT,
             )
+
+    @pytest.mark.parametrize(
+        "event_type", ["earnings", "income_statement", "balance_sheet", "cash_flow", "dividend", "split"]
+    )
+    def test_all_literal_values_are_valid(self, event_type):
+        """`income_statement`/`balance_sheet`/`cash_flow` distinguono i tre
+        bilanci FMP, che condividevano `event_type='earnings'` e collidevano
+        sulla stessa chiave se riferiti alla stessa data."""
+        record = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 8, 1),
+            event_type=event_type,
+            raw_payload={},
+            source="FMP",
+            fetched_at=FETCHED_AT,
+        )
+        assert record.event_type == event_type
 
 
 class TestUniverseMemberRecord:

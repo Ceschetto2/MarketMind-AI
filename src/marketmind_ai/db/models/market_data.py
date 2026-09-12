@@ -182,7 +182,9 @@ class CompanyEvent(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('earnings', 'dividend', 'split')", name="event_type"
+            "event_type IN ('earnings', 'income_statement', 'balance_sheet', "
+            "'cash_flow', 'dividend', 'split')",
+            name="event_type",
         ),
         UniqueConstraint("asset_id", "ts", "event_type", "source"),
         Index("ib_company_events_asset_ts", "asset_id", "ts"),
