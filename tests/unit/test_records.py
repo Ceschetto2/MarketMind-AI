@@ -173,6 +173,46 @@ class TestCompanyEventRecord:
         )
         assert record.event_type == "earnings"
 
+    def test_identifying_fields_default_to_none_when_omitted(self):
+        """Solo FMP li fornisce (Finnhub earnings calendar non li ha) —
+        opzionali, non obbligatori."""
+        record = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 8, 1),
+            event_type="earnings",
+            raw_payload={"eps": 1.5},
+            source="finnhub",
+            fetched_at=FETCHED_AT,
+        )
+        assert record.fiscal_year is None
+        assert record.period is None
+        assert record.reported_currency is None
+        assert record.cik is None
+        assert record.filing_date is None
+        assert record.accepted_date is None
+
+    def test_identifying_fields_valid_when_provided(self):
+        record = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 6, 30),
+            event_type="earnings",
+            raw_payload={"revenue": 90_000_000_000},
+            source="FMP",
+            fetched_at=FETCHED_AT,
+            fiscal_year="2026",
+            period="Q3",
+            reported_currency="USD",
+            cik="0000320193",
+            filing_date=date(2026, 7, 20),
+            accepted_date=date(2026, 7, 20),
+        )
+        assert record.fiscal_year == "2026"
+        assert record.period == "Q3"
+        assert record.reported_currency == "USD"
+        assert record.cik == "0000320193"
+        assert record.filing_date == date(2026, 7, 20)
+        assert record.accepted_date == date(2026, 7, 20)
+
     def test_missing_required_field_raises(self):
         with pytest.raises(ValidationError):
             CompanyEventRecord(

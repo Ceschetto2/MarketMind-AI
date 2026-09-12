@@ -74,7 +74,23 @@ def _latest_record(statements: list[dict]) -> dict | None:
     return max(statements, key=lambda s: s["date"])
 
 
+def _parse_optional_date(value: str | None) -> date | None:
+    """`filingDate` è solo data (`YYYY-MM-DD`), ma `acceptedDate` osservato
+    su dati reali porta anche un orario (`YYYY-MM-DD HH:MM:SS`) — i primi 10
+    caratteri isolano la data in entrambi i casi, la componente oraria non
+    viene preservata in questa colonna di comodo (il valore completo resta
+    comunque in `raw_payload`).
+    """
+    return date.fromisoformat(value[:10]) if value else None
+
+
 def _statements_to_record(symbol: str, endpoint: str, statement: dict) -> CompanyEventRecord:
+    """`fiscal_year`/`period`/`reported_currency`/`cik`/`filing_date`/
+    `accepted_date` sono comuni ai tre bilanci (income/balance-sheet/
+    cash-flow-statement), assenti dai payload di `dividends`/`splits` —
+    letti con `.get()`, mai un accesso diretto a chiave, per non sollevare
+    su un endpoint che non li ha.
+    """
     return CompanyEventRecord(
         symbol=symbol,
         ts=date.fromisoformat(statement["date"]),
@@ -82,6 +98,12 @@ def _statements_to_record(symbol: str, endpoint: str, statement: dict) -> Compan
         raw_payload=statement,
         source=SOURCE,
         fetched_at=datetime.now(timezone.utc),
+        fiscal_year=statement.get("fiscalYear"),
+        period=statement.get("period"),
+        reported_currency=statement.get("reportedCurrency"),
+        cik=statement.get("cik"),
+        filing_date=_parse_optional_date(statement.get("filingDate")),
+        accepted_date=_parse_optional_date(statement.get("acceptedDate")),
     )
 
 

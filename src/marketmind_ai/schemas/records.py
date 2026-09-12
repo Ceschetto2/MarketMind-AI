@@ -93,6 +93,17 @@ class MacroEventRecord(BaseModel):
 class CompanyEventRecord(BaseModel):
     """Evento societario, alimentato da Finnhub (`/calendar/earnings`) e FMP
     (bilanci, dividendi, split).
+
+    I sei campi identificativi opzionali (`fiscal_year`, `period`,
+    `reported_currency`, `cik`, `filing_date`, `accepted_date`) sono comuni
+    ai tre bilanci FMP (income/balance-sheet/cash-flow-statement) — non
+    servono a distinguerli tra loro (li accomuna comunque
+    `event_type='earnings'`), ma sono utili per query dirette senza dover
+    scavare in `raw_payload`. Solo FMP li fornisce: rimangono `None` per gli
+    eventi Finnhub (`/calendar/earnings` non ha un concetto equivalente —
+    il suo `quarter`/`year` numerico non è la stessa cosa del `period`/
+    `fiscalYear` testuale di FMP, non forziamo una falsa equivalenza) e per
+    dividendi/split FMP (che non hanno bilancio associato).
     """
 
     symbol: str
@@ -101,6 +112,12 @@ class CompanyEventRecord(BaseModel):
     raw_payload: dict
     source: str
     fetched_at: datetime
+    fiscal_year: Optional[str] = None
+    period: Optional[str] = None
+    reported_currency: Optional[str] = None
+    cik: Optional[str] = None
+    filing_date: Optional[date] = None
+    accepted_date: Optional[date] = None
 
 
 class UniverseMemberRecord(BaseModel):

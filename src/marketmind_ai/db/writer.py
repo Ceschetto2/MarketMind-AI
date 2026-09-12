@@ -289,6 +289,12 @@ def write_company_event(
         event_type=record.event_type,
         source=record.source,
         fetched_at=record.fetched_at,
+        fiscal_year=record.fiscal_year,
+        period=record.period,
+        reported_currency=record.reported_currency,
+        cik=record.cik,
+        filing_date=record.filing_date,
+        accepted_date=record.accepted_date,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=[
@@ -297,7 +303,15 @@ def write_company_event(
             CompanyEvent.event_type,
             CompanyEvent.source,
         ],
-        set_={"fetched_at": stmt.excluded.fetched_at},
+        set_={
+            "fetched_at": stmt.excluded.fetched_at,
+            "fiscal_year": stmt.excluded.fiscal_year,
+            "period": stmt.excluded.period,
+            "reported_currency": stmt.excluded.reported_currency,
+            "cik": stmt.excluded.cik,
+            "filing_date": stmt.excluded.filing_date,
+            "accepted_date": stmt.excluded.accepted_date,
+        },
     ).returning(CompanyEvent.company_event_id)
     company_event_id = session.execute(stmt).scalar_one()
 

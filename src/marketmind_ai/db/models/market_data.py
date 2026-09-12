@@ -153,7 +153,12 @@ class CompanyEvent(Base):
     fonte* — Finnhub e FMP possono scrivere entrambi `event_type='earnings'`
     per lo stesso asset alla stessa data (earnings calendar vs bilancio
     trimestrale) e convivono come righe distinte, invece che l'ultima
-    sovrascriva l'altra (agenda #52).
+    sovrascriva l'altra.
+
+    Sei colonne identificative opzionali (`0008`), comuni ai tre bilanci
+    FMP: valorizzate solo da FMP, `None` per gli eventi Finnhub e per
+    dividendi/split FMP — comode per query dirette, il payload completo
+    resta comunque in `raw.t_company_events_raw`.
     """
 
     __tablename__ = "t_company_events"
@@ -168,6 +173,12 @@ class CompanyEvent(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
+    fiscal_year: Mapped[str | None] = mapped_column(Text)
+    period: Mapped[str | None] = mapped_column(Text)
+    reported_currency: Mapped[str | None] = mapped_column(Text)
+    cik: Mapped[str | None] = mapped_column(Text)
+    filing_date: Mapped[date | None] = mapped_column()
+    accepted_date: Mapped[date | None] = mapped_column()
 
     __table_args__ = (
         CheckConstraint(
