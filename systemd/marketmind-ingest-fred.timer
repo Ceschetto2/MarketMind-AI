@@ -1,0 +1,13 @@
+# Trigger primario della pipeline `fred` — cadenza giornaliera: un poll
+# uniforme cattura qualunque release indipendentemente dal calendario di
+# rilascio proprio di ciascun indicatore (mensile, trimestrale, ...).
+
+[Unit]
+Description=MarketMind AI — timer ingestion fred (giornaliera)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

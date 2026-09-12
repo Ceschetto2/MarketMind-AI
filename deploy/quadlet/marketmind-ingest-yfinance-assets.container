@@ -1,0 +1,23 @@
+# Quadlet Podman rootless per la pipeline di ingestion `yfinance-assets`
+# (anagrafica → `market_data.t_assets`), sulla stessa immagine condivisa
+# `marketmind-ingestion` di `yfinance-prices`.
+
+[Unit]
+Description=MarketMind AI — ingestion yfinance-assets (anagrafica)
+
+[Container]
+Image=localhost/marketmind-ingestion:latest
+ContainerName=marketmind-ingest-yfinance-assets
+Network=marketmind.network
+Exec=python -m marketmind_ai.ingestion.yfinance_assets_pipeline
+Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_ingestion
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

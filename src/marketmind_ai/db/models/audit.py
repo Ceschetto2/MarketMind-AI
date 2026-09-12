@@ -1,7 +1,7 @@
 """Tabelle dello schema `audit` — logging e auditing operativo.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md`. `t_ingestion_runs`
+`Market Mind AI - Docs/db/01_schema_dati_er.md`. `t_ingestion_runs`
 traccia ogni esecuzione di uno script di ingestion — utile in un'architettura
 senza orchestratore dedicato, dove altrimenti l'unica visibilità sarebbe
 `journalctl`. `t_audit_logs` è un log generico di modifiche riga per riga
@@ -55,7 +55,9 @@ class IngestionRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "source IN ('yfinance', 'gdelt', 'finnhub', 'fred', 'fmp')", name="source"
+            "source IN ('yfinance', 'gdelt', 'gdelt-ngrams', 'gdelt-doc', 'finnhub', "
+            "'fred', 'fmp', 'universe-csv')",
+            name="source",
         ),
         CheckConstraint(
             "status IN ('running', 'success', 'failed', 'partial')", name="status"

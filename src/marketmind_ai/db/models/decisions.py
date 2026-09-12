@@ -1,7 +1,7 @@
 """Tabelle dello schema `decisions`.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md`. `t_model_runs`/
+`Market Mind AI - Docs/db/01_schema_dati_er.md`. `t_model_runs`/
 `t_model_decisions` usano una singola colonna `ts` (non più `run_ts`/
 `decision_ts`) — normalizzazione decisa il 29-08-26 (agenda #19). Le tre
 tabelle dipendono solo da `t_assets` e tra loro, mai direttamente dalle

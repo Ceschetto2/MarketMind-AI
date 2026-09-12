@@ -25,6 +25,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -93,6 +94,10 @@ class NewsEvent(Base):
     `asset_id` nullable: GDELT non fornisce un mapping diretto articolo →
     ticker, la riga viene scritta comunque e l'entity linking la aggiorna
     in un secondo momento (match sul `QUADGRAM` di Web NGrams).
+
+    `url` unico (`0006`): chiave naturale di deduplicazione — un fetch che
+    ricopre una finestra temporale già coperta aggiorna la riga esistente
+    invece di duplicarla, stesso principio dell'upsert su `t_market_prices`.
     """
 
     __tablename__ = "t_news_events"
@@ -104,7 +109,7 @@ class NewsEvent(Base):
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     headline: Mapped[str] = mapped_column(Text, nullable=False)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     sentiment_score: Mapped[float | None] = mapped_column(Double)
     fetched_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
@@ -141,7 +146,15 @@ class MacroEvent(Base):
 
 
 class CompanyEvent(Base):
-    """Eventi societari (Finnhub `/calendar/earnings`, FMP bilanci/dividendi/split)."""
+    """Eventi societari (Finnhub `/calendar/earnings`, FMP bilanci/dividendi/split).
+
+    `(asset_id, ts, event_type, source)` unico (`0006`, `source` aggiunta in
+    `0007`): un solo evento di un dato tipo per asset per giorno *per
+    fonte* — Finnhub e FMP possono scrivere entrambi `event_type='earnings'`
+    per lo stesso asset alla stessa data (earnings calendar vs bilancio
+    trimestrale) e convivono come righe distinte, invece che l'ultima
+    sovrascriva l'altra (agenda #52).
+    """
 
     __tablename__ = "t_company_events"
 
@@ -160,6 +173,7 @@ class CompanyEvent(Base):
         CheckConstraint(
             "event_type IN ('earnings', 'dividend', 'split')", name="event_type"
         ),
+        UniqueConstraint("asset_id", "ts", "event_type", "source"),
         Index("ib_company_events_asset_ts", "asset_id", "ts"),
         {"schema": SCHEMA},
     )

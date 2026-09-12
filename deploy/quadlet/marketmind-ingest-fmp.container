@@ -1,0 +1,37 @@
+# Quadlet Podman rootless per la pipeline di ingestion `fmp` (fondamentali —
+# bilanci, dividendi, split — → `market_data.t_company_events`), sulla
+# stessa immagine condivisa `marketmind-ingestion`.
+#
+# **Nessun `.timer` proprio, deliberatamente**: incatenata a
+# `marketmind-ingest-finnhub-earnings.service` via `OnSuccess=` (vedi quel
+# `.container`) — il budget di 250 richieste/giorno del piano free FMP non
+# regge un giro sull'intero universo × 5 endpoint ogni giorno, quindi
+# questa pipeline interroga solo gli asset con earnings Finnhub recente,
+# letti da `t_company_events`, non l'intero universo. Vedi
+# `Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`
+# § "FMP: scheduling vincolato dal budget". Resta comunque triggerabile a
+# mano con `deploy.sh --trigger fmp`.
+#
+# `Secret=marketmind-fmp-api-key` è la chiave API FMP (creata da deploy.sh
+# da FMP_API_KEY in .env).
+
+[Unit]
+Description=MarketMind AI — ingestion fmp (fondamentali)
+
+[Container]
+Image=localhost/marketmind-ingestion:latest
+ContainerName=marketmind-ingest-fmp
+Network=marketmind.network
+Exec=python -m marketmind_ai.ingestion.fmp_pipeline
+Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
+Secret=marketmind-fmp-api-key,type=env,target=FMP_API_KEY
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_ingestion
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

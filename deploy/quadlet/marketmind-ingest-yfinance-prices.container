@@ -1,0 +1,46 @@
+# Quadlet Podman rootless per la pipeline di ingestion `yfinance-prices`
+# (prezzi orari intraday → `market_data.t_market_prices`), prima delle otto
+# pipeline previste in `Market Mind AI - Docs/pipelines/00_container_e_immagini.md`.
+#
+# Stesso pattern one-shot di `marketmind-db.container`, ma sull'immagine
+# condivisa `marketmind-ingestion` (`deploy/ingestion/Containerfile`,
+# build: `podman build -t marketmind-ingestion:latest -f
+# deploy/ingestion/Containerfile .`): un container per pipeline, `Exec=`
+# diverso per ciascuna, nessun timer interno al container — il battito
+# viene dall'esterno, da `marketmind-ingest-yfinance-prices.timer` (trigger
+# primario) o da `deploy.sh --trigger yfinance-prices` (trigger manuale),
+# vedi `Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`.
+#
+# `Network=marketmind.network` mette il container sulla stessa rete
+# Podman condivisa di `marketmind-db` (vedi `marketmind.network` e
+# `Market Mind AI - Docs/Architettura/05_networking.md`): risolve
+# `POSTGRES_HOST=marketmind-db` via il DNS integrato di Podman, non
+# `127.0.0.1`/la porta pubblicata sull'host — sono due container distinti
+# sulla stessa rete, non lo stesso host network.
+#
+# `Secret=marketmind-ingestion-password` è la password del ruolo Postgres
+# applicativo dedicato all'ingestion, `marketmind_ingestion` (scrittura
+# `market_data`+`audit`, deciso in `db/03_utenti_db.md`, agenda #27) — il
+# secret stesso e lo script che crea il ruolo non esistono ancora mentre
+# questo file viene scritto, sono a carico di un'altra unità di lavoro in
+# parallelo.
+
+[Unit]
+Description=MarketMind AI — ingestion yfinance-prices (prezzi orari intraday)
+
+[Container]
+Image=localhost/marketmind-ingestion:latest
+ContainerName=marketmind-ingest-yfinance-prices
+Network=marketmind.network
+Exec=python -m marketmind_ai.ingestion.yfinance_prices_pipeline
+Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_ingestion
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

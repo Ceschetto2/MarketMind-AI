@@ -14,6 +14,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
     "sqlalchemy>=2.0.52",
+    "tenacity>=9.1.4",
     "yfinance>=1.7.0",
 ]
 
@@ -33,3 +34,19 @@ build-backend = "uv_build"
 script_location = "alembic"
 prepend_sys_path = ["."]
 version_path_separator = "os"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `integration` richiede Postgres reale raggiungibile (marketmind-db, via
+# .env) — coerente con la prassi già in uso nel progetto di verificare
+# schema/scritture contro l'istanza vera, non un mock. `unit` non tocca
+# né DB né rete: fonti dati esterne (yfinance, ecc.) sono mockate.
+markers = [
+    "integration: richiede Postgres reale raggiungibile (marketmind-db)",
+]

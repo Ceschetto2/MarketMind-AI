@@ -1,7 +1,7 @@
 """Schema iniziale: 3 schema Postgres, 10 tabelle, hypertable prezzi, audit trigger.
 
 Rispecchia colonna per colonna l'`erDiagram` confermato in
-`Market Mind AI - Docs/Architettura/01_schema_dati_er.md` (vault Obsidian
+`Market Mind AI - Docs/db/01_schema_dati_er.md` (vault Obsidian
 esterno al repo, percorso in CLAUDE.md), comprese le decisioni del 29-08-26:
 PK di `t_market_prices` estesa a `(asset_id, ts, source)`; colonna `ts`
 unica su `t_model_runs`/`t_model_decisions` (al posto di `run_ts`/
