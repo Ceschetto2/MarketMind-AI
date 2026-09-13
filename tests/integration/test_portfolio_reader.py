@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 import pytest
 
 from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition
+from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
 from marketmind_ai.db.portfolio_reader import (
     get_active_model_portfolios,
     get_portfolio,
     get_portfolio_positions,
+    get_watchlist,
 )
 
 pytestmark = pytest.mark.integration
@@ -37,6 +38,7 @@ def _make_portfolio(session, **overrides) -> int:
         is_active=True,
         llm_provider="gemini",
         model_version="gemini-3.6-flash",
+        strategy_prompt="strategia di test",
     )
     defaults.update(overrides)
     portfolio = Portfolio(**defaults)
@@ -45,10 +47,10 @@ def _make_portfolio(session, **overrides) -> int:
     return portfolio.portfolio_id
 
 
-def _make_asset(session) -> int:
+def _make_asset(session, asset_id: int = TEST_ASSET_ID, symbol: str = "TESTX") -> int:
     asset = Asset(
-        asset_id=TEST_ASSET_ID,
-        symbol="TESTX",
+        asset_id=asset_id,
+        symbol=symbol,
         name="Test Asset",
         sector="Test",
         asset_type="equity",
@@ -134,3 +136,37 @@ class TestGetActiveModelPortfolios:
         assert active_model in ids
         assert inactive_model not in ids
         assert benchmark not in ids
+
+
+class TestGetWatchlist:
+    def test_returns_only_assets_of_the_given_portfolio(self, db_session):
+        portfolio_id = _make_portfolio(db_session)
+        other_portfolio_id = _make_portfolio(
+            db_session, portfolio_id=TEST_PORTFOLIO_ID_2, name="other-portfolio"
+        )
+        asset_id = _make_asset(db_session)
+        other_asset_id = _make_asset(db_session, asset_id=-3, symbol="OTHERX")
+        db_session.add_all(
+            [
+                PortfolioWatchlistEntry(
+                    portfolio_id=portfolio_id,
+                    asset_id=asset_id,
+                    added_at=datetime.now(timezone.utc),
+                ),
+                PortfolioWatchlistEntry(
+                    portfolio_id=other_portfolio_id,
+                    asset_id=other_asset_id,
+                    added_at=datetime.now(timezone.utc),
+                ),
+            ]
+        )
+        db_session.flush()
+
+        watchlist = get_watchlist(db_session, portfolio_id)
+
+        assert [a.symbol for a in watchlist] == ["TESTX"]
+
+    def test_empty_watchlist_returns_empty_list(self, db_session):
+        portfolio_id = _make_portfolio(db_session)
+
+        assert get_watchlist(db_session, portfolio_id) == []

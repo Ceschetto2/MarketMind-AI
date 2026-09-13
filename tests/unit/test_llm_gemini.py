@@ -11,7 +11,7 @@ import pytest
 
 from marketmind_ai.llm.exceptions import DecisionError
 from marketmind_ai.llm.gemini import GeminiProvider, _call_gemini
-from marketmind_ai.llm.schemas import Decision
+from marketmind_ai.llm.schemas import Decision, WatchlistSelection
 
 
 def _mock_response(mocker, text: str):
@@ -103,7 +103,9 @@ class TestCallGemiRetry:
         ]
         mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
 
-        response = _call_gemini(mock_client, model="gemini-2.5-flash", prompt="ciao")
+        response = _call_gemini(
+            mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
+        )
 
         assert response.text == '{"decision": "HOLD"}'
         assert mock_client.models.generate_content.call_count == 3
@@ -114,4 +116,32 @@ class TestCallGemiRetry:
         mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
 
         with pytest.raises(RuntimeError):
-            _call_gemini(mock_client, model="gemini-2.5-flash", prompt="ciao")
+            _call_gemini(
+                mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
+            )
+
+
+class TestSelectWatchlist:
+    def test_returns_selection_on_valid_response(self, mocker):
+        provider = GeminiProvider(api_key="fake-key")
+        valid_json = '{"symbols": ["AAPL", "MSFT"], "reasoning": "focus tech"}'
+        mock_call = mocker.patch(
+            "marketmind_ai.llm.gemini._call_gemini",
+            return_value=_mock_response(mocker, valid_json),
+        )
+
+        selection = provider.select_watchlist({"strategy_prompt": "focus tech"})
+
+        assert selection == WatchlistSelection(symbols=["AAPL", "MSFT"], reasoning="focus tech")
+        _, kwargs = mock_call.call_args
+        assert kwargs["response_schema"] is WatchlistSelection
+
+    def test_raises_decision_error_on_invalid_json(self, mocker):
+        provider = GeminiProvider(api_key="fake-key")
+        mocker.patch(
+            "marketmind_ai.llm.gemini._call_gemini",
+            return_value=_mock_response(mocker, "non è json"),
+        )
+
+        with pytest.raises(DecisionError):
+            provider.select_watchlist({"strategy_prompt": "focus tech"})

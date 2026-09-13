@@ -51,6 +51,7 @@ def _make_portfolio(session) -> int:
         is_active=True,
         llm_provider="gemini",
         model_version="gemini-3.6-flash",
+        strategy_prompt="strategia di test",
     )
     session.add(portfolio)
     session.flush()

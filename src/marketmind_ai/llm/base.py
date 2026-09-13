@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from marketmind_ai.llm.schemas import Decision
+from marketmind_ai.llm.schemas import Decision, WatchlistSelection
 
 
 class LLMProvider(Protocol):
@@ -25,5 +25,16 @@ class LLMProvider(Protocol):
         Solleva `llm.exceptions.DecisionError` se non riesce a ottenere una
         `Decision` valida, anche dopo eventuali retry interni — mai un
         fallback silenzioso travestito da decisione vera.
+        """
+        ...
+
+    def select_watchlist(self, context: dict[str, Any]) -> WatchlistSelection:
+        """Sceglie quali asset dell'universo osservare per un portfolio,
+        dato l'universo intero e la sua strategia — il bootstrap
+        (`decision_engine.engine.initialize_portfolio`), non il loop
+        settimanale ordinario.
+
+        Solleva `llm.exceptions.DecisionError` alle stesse condizioni di
+        `decide()`.
         """
         ...

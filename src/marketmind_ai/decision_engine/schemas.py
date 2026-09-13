@@ -54,12 +54,39 @@ class PortfolioState(BaseModel):
     combinazione asset+timestamp può produrre un giudizio diverso per due
     portfolio diversi (uno ha capitale libero, l'altro è già esposto
     sull'asset). Nessun limite di allocazione/concentrazione qui dentro
-    ancora — `Market Mind AI - Docs/Decision Engine/`, non deciso oggi."""
+    ancora — `Market Mind AI - Docs/Decision Engine/`, non deciso oggi.
+
+    `strategy_prompt` è persistente (`t_portfolios.strategy_prompt`, non
+    solo usato al bootstrap): guida ogni decisione futura di questo
+    portfolio, non solo la scelta iniziale dello scope di asset."""
 
     portfolio_id: int
     name: str
     cash: float
+    strategy_prompt: str
     positions: list[PortfolioPositionSnippet]
+
+
+class AssetSummary(BaseModel):
+    """Un candidato dell'universo osservato, per il bootstrap di un
+    portfolio — identità, non dati di mercato: il bootstrap sceglie uno
+    scope, non giudica un segnale (quello è `decide()`, dopo)."""
+
+    symbol: str
+    name: str
+    sector: Optional[str] = None
+    asset_type: str
+
+
+class BootstrapContext(BaseModel):
+    """Il context package passato a `LLMProvider.select_watchlist()` per
+    inizializzare un portfolio: l'universo intero (candidati, non filtrato
+    per nessun portfolio) più la strategia di *questo* portfolio."""
+
+    portfolio_id: int
+    portfolio_name: str
+    strategy_prompt: str
+    universe: list[AssetSummary]
 
 
 class DecisionContext(BaseModel):

@@ -17,7 +17,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition
+from marketmind_ai.db.models.market_data import Asset
+from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
 
 
 def get_portfolio(session: Session, portfolio_id: int) -> Portfolio:
@@ -49,5 +50,21 @@ def get_active_model_portfolios(session: Session) -> list[Portfolio]:
                 Portfolio.portfolio_type == "model",
                 Portfolio.is_active.is_(True),
             )
+        ).scalars()
+    )
+
+
+def get_watchlist(session: Session, portfolio_id: int) -> list[Asset]:
+    """Asset che questo portfolio osserva — lo scope su cui gira il loop
+    settimanale ordinario per questo portfolio, popolato dal bootstrap
+    (`decision_engine.engine.initialize_portfolio`). Distinta da
+    `get_decision_universe` (`context_reader.py`), che resta l'universo
+    intero, non filtrato per portfolio — usata solo dal bootstrap stesso
+    per scegliere lo scope."""
+    return list(
+        session.execute(
+            select(Asset)
+            .join(PortfolioWatchlistEntry, PortfolioWatchlistEntry.asset_id == Asset.asset_id)
+            .where(PortfolioWatchlistEntry.portfolio_id == portfolio_id)
         ).scalars()
     )

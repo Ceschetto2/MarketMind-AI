@@ -23,6 +23,7 @@ from marketmind_ai.db.models.portfolio import (
     PortfolioPosition,
     PortfolioPositionSnapshot,
     PortfolioSnapshot,
+    PortfolioWatchlistEntry,
 )
 from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
 
@@ -42,6 +43,7 @@ __all__ = [
     "PortfolioPosition",
     "PortfolioSnapshot",
     "PortfolioPositionSnapshot",
+    "PortfolioWatchlistEntry",
     "IngestionRun",
     "AuditLog",
 ]

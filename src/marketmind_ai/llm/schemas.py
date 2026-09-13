@@ -52,3 +52,18 @@ class Decision(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     reasoning: Optional[str] = None
     defer: Optional[DeferralRequest] = None
+
+
+class WatchlistSelection(BaseModel):
+    """Output del bootstrap di un portfolio: quali asset dell'universo
+    osservato tenere d'occhio, dati l'universo intero e la strategia del
+    portfolio (`decision_engine.engine.initialize_portfolio`).
+
+    Non è una `Decision`: non c'è un BUY/SELL/HOLD, solo una selezione di
+    scope — nessun capitale viene impegnato qui, `decision_engine/` la
+    traduce in righe di `portfolio.t_portfolio_watchlist`, mai in
+    `t_portfolio_positions`.
+    """
+
+    symbols: list[str]
+    reasoning: Optional[str] = None

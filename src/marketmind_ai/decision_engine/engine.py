@@ -1,10 +1,17 @@
 """Il loop del motore decisionale: un run indipendente per ciascun portfolio
 'model' attivo, ciascuno con il proprio provider — mai condividono stato.
 
+Un portfolio non parte con lo scope dell'intero universo: va prima
+inizializzato (`initialize_portfolio()`, bootstrap — una singola chiamata
+`select_watchlist()`, non `decide()`) che sceglie quali asset osservare, in
+base alla sua strategia. `run_weekly_decisions()` gira solo su quello scope
+(`get_watchlist`); un portfolio mai inizializzato ha una watchlist vuota e
+il suo run produce zero decisioni, non un errore.
+
 Non ancora un entry point standalone (nessun `if __name__ == "__main__":`,
 nessun Quadlet/timer): il wiring per la cadenza settimanale è deliberatamente
-rimandato, `run_weekly_decisions()` resta per ora solo una funzione
-richiamabile.
+rimandato. `initialize_portfolio()` è pensata per essere invocata da un
+front-end futuro quando un portfolio viene creato/attivato, non da qui.
 """
 
 from __future__ import annotations
@@ -15,13 +22,19 @@ from datetime import datetime, timezone
 from marketmind_ai.db.context_reader import get_decision_universe
 from marketmind_ai.db.decision_writer import create_model_run, write_model_decision
 from marketmind_ai.db.models.portfolio import Portfolio
-from marketmind_ai.db.portfolio_reader import get_active_model_portfolios
+from marketmind_ai.db.portfolio_reader import (
+    get_active_model_portfolios,
+    get_portfolio,
+    get_watchlist,
+)
+from marketmind_ai.db.portfolio_writer import write_watchlist
 from marketmind_ai.db.session import get_session
 from marketmind_ai.decision_engine.context_builder import (
     DEFAULT_COMPANY_EVENT_DAYS_BACK,
     DEFAULT_NEWS_DAYS_BACK,
     DEFAULT_NEWS_MAX_ITEMS,
     DEFAULT_PRICE_DAYS_BACK,
+    build_bootstrap_context,
     build_context,
 )
 from marketmind_ai.llm.exceptions import DecisionError
@@ -30,32 +43,80 @@ from marketmind_ai.llm.factory import get_provider
 logger = logging.getLogger(__name__)
 
 
+def initialize_portfolio(portfolio_id: int) -> None:
+    """Bootstrap: sceglie lo scope di asset di questo portfolio con
+    un'unica chiamata `select_watchlist()` (l'universo intero + la
+    strategia del portfolio), poi sostituisce la sua watchlist con la
+    selezione — un replace totale, non un merge (`write_watchlist`).
+
+    Un `symbol` restituito dal modello che non corrisponde a nessun asset
+    dell'universo viene scartato con un warning, non propagato: la
+    selezione resta valida per la parte che si può risolvere.
+    """
+    with get_session() as session:
+        portfolio = get_portfolio(session, portfolio_id)
+        context = build_bootstrap_context(session, portfolio_id)
+        universe_by_symbol = {a.symbol: a.asset_id for a in get_decision_universe(session)}
+
+    provider = get_provider(name=portfolio.llm_provider, model=portfolio.model_version, api_key=None)
+
+    try:
+        selection = provider.select_watchlist(context.model_dump(mode="json"))
+    except DecisionError:
+        logger.exception("bootstrap fallito per il portfolio %s", portfolio_id)
+        raise
+
+    asset_ids = []
+    for symbol in selection.symbols:
+        asset_id = universe_by_symbol.get(symbol)
+        if asset_id is None:
+            logger.warning(
+                "select_watchlist ha restituito %r, non nell'universo — scartato", symbol
+            )
+            continue
+        asset_ids.append(asset_id)
+
+    with get_session() as session:
+        write_watchlist(session, portfolio_id, asset_ids, added_at=datetime.now(timezone.utc))
+
+    logger.info(
+        "bootstrap completato per il portfolio %d: %d/%d symbol validi",
+        portfolio_id,
+        len(asset_ids),
+        len(selection.symbols),
+    )
+
+
 def run_weekly_decisions(as_of: datetime | None = None) -> None:
     """Un ciclo completo: un run indipendente per ogni portfolio 'model'
     attivo (`get_active_model_portfolios`, esclude benchmark e portfolio
-    sospesi). Un errore isolato a un portfolio — nella creazione del
-    provider o in una singola decisione — non blocca gli altri portfolio:
-    ciascuno gira nel proprio `try` a sé.
+    sospesi), scoperto sulla propria watchlist (`get_watchlist`), non
+    sull'intero universo. Un errore isolato a un portfolio — nella
+    creazione del provider o in una singola decisione — non blocca gli
+    altri portfolio: ciascuno gira nel proprio `try` a sé.
     """
     as_of = as_of or datetime.now(timezone.utc)
 
     with get_session() as session:
         portfolios = get_active_model_portfolios(session)
-        universe = get_decision_universe(session)
 
     for portfolio in portfolios:
         try:
-            _run_for_portfolio(portfolio, universe, as_of)
+            _run_for_portfolio(portfolio, as_of)
         except Exception:
             logger.exception("run fallito per il portfolio %s, salto", portfolio.portfolio_id)
 
 
-def _run_for_portfolio(portfolio: Portfolio, universe: list, as_of: datetime) -> None:
+def _run_for_portfolio(portfolio: Portfolio, as_of: datetime) -> None:
     provider = get_provider(name=portfolio.llm_provider, model=portfolio.model_version, api_key=None)
+
+    with get_session() as session:
+        watchlist = get_watchlist(session, portfolio.portfolio_id)
+
     run_id = _create_run(portfolio, as_of)
 
     decisions_written = 0
-    for asset in universe:
+    for asset in watchlist:
         with get_session() as session:
             context = build_context(
                 session, asset.asset_id, asset.symbol, portfolio_id=portfolio.portfolio_id, as_of=as_of
@@ -87,7 +148,7 @@ def _run_for_portfolio(portfolio: Portfolio, universe: list, as_of: datetime) ->
         run_id,
         portfolio.portfolio_id,
         decisions_written,
-        len(universe),
+        len(watchlist),
     )
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from marketmind_ai.llm.schemas import Decision, DeferralRequest
+from marketmind_ai.llm.schemas import Decision, DeferralRequest, WatchlistSelection
 
 
 class TestDecision:
@@ -74,3 +74,21 @@ class TestDeferralRequest:
 
         assert decision.defer.retry_after_minutes == 15
         assert decision.defer.refresh_pipeline == "finnhub-news"
+
+
+class TestWatchlistSelection:
+    def test_valid_construction(self):
+        selection = WatchlistSelection(symbols=["AAPL", "MSFT"], reasoning="focus tech")
+
+        assert selection.symbols == ["AAPL", "MSFT"]
+        assert selection.reasoning == "focus tech"
+
+    def test_reasoning_defaults_to_none(self):
+        selection = WatchlistSelection(symbols=["AAPL"])
+
+        assert selection.reasoning is None
+
+    def test_empty_symbols_is_valid(self):
+        selection = WatchlistSelection(symbols=[])
+
+        assert selection.symbols == []

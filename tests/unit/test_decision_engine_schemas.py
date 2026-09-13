@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from marketmind_ai.decision_engine.schemas import (
+    AssetSummary,
+    BootstrapContext,
     CompanyEventSnippet,
     DecisionContext,
     MacroSnippet,
@@ -21,7 +23,13 @@ AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
 
 
 def _empty_portfolio_state(**overrides) -> PortfolioState:
-    defaults = dict(portfolio_id=1, name="test-portfolio", cash=10_000.0, positions=[])
+    defaults = dict(
+        portfolio_id=1,
+        name="test-portfolio",
+        cash=10_000.0,
+        strategy_prompt="strategia di test",
+        positions=[],
+    )
     defaults.update(overrides)
     return PortfolioState(**defaults)
 
@@ -104,11 +112,48 @@ class TestPortfolioState:
             portfolio_id=1,
             name="gemini-baseline",
             cash=50_000.0,
+            strategy_prompt="focus su crescita tech",
             positions=[PortfolioPositionSnippet(symbol="MSFT", quantity=5.0, avg_price=300.0)],
         )
 
         assert state.cash == 50_000.0
         assert state.positions[0].symbol == "MSFT"
+
+
+class TestAssetSummary:
+    def test_sector_defaults_to_none(self):
+        summary = AssetSummary(symbol="AAPL", name="Apple Inc.", asset_type="equity")
+
+        assert summary.sector is None
+
+
+class TestBootstrapContext:
+    def test_valid_construction(self):
+        context = BootstrapContext(
+            portfolio_id=1,
+            portfolio_name="gemini-baseline",
+            strategy_prompt="focus su crescita tech",
+            universe=[
+                AssetSummary(symbol="AAPL", name="Apple Inc.", sector="Technology", asset_type="equity"),
+                AssetSummary(symbol="XOM", name="Exxon Mobil", sector="Energy", asset_type="equity"),
+            ],
+        )
+
+        assert len(context.universe) == 2
+        assert context.universe[0].symbol == "AAPL"
+
+    def test_model_dump_is_json_serializable(self):
+        context = BootstrapContext(
+            portfolio_id=1,
+            portfolio_name="gemini-baseline",
+            strategy_prompt="focus su crescita tech",
+            universe=[],
+        )
+
+        dumped = context.model_dump(mode="json")
+
+        assert dumped["portfolio_name"] == "gemini-baseline"
+        assert dumped["universe"] == []
 
     def test_empty_positions_is_valid(self):
         state = _empty_portfolio_state()

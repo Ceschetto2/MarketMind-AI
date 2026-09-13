@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from marketmind_ai.db.context_reader import (
+    get_decision_universe,
     get_latest_macro_events,
     get_recent_company_events,
     get_recent_news,
@@ -30,6 +31,8 @@ from marketmind_ai.db.context_reader import (
 )
 from marketmind_ai.db.portfolio_reader import get_portfolio, get_portfolio_positions
 from marketmind_ai.decision_engine.schemas import (
+    AssetSummary,
+    BootstrapContext,
     CompanyEventSnippet,
     DecisionContext,
     MacroSnippet,
@@ -87,6 +90,7 @@ def build_context(
             portfolio_id=portfolio.portfolio_id,
             name=portfolio.name,
             cash=portfolio.cash,
+            strategy_prompt=portfolio.strategy_prompt,
             positions=[
                 PortfolioPositionSnippet(
                     symbol=p.asset.symbol, quantity=p.quantity, avg_price=p.avg_price
@@ -104,5 +108,24 @@ def build_context(
         ],
         company_events=[
             CompanyEventSnippet(ts=e.ts, event_type=e.event_type) for e in company_events
+        ],
+    )
+
+
+def build_bootstrap_context(session: Session, portfolio_id: int) -> BootstrapContext:
+    """Costruisce il context per `LLMProvider.select_watchlist()`: l'universo
+    intero (candidati per *tutti* i portfolio, non filtrato) più la
+    strategia di questo portfolio soltanto — l'universo non è dato del
+    portfolio, la strategia sì."""
+    portfolio = get_portfolio(session, portfolio_id)
+    universe = get_decision_universe(session)
+
+    return BootstrapContext(
+        portfolio_id=portfolio.portfolio_id,
+        portfolio_name=portfolio.name,
+        strategy_prompt=portfolio.strategy_prompt,
+        universe=[
+            AssetSummary(symbol=a.symbol, name=a.name, sector=a.sector, asset_type=a.asset_type)
+            for a in universe
         ],
     )

@@ -8,7 +8,7 @@ from marketmind_ai.llm.base import LLMProvider
 from marketmind_ai.llm.exceptions import DecisionError
 from marketmind_ai.llm.factory import get_provider
 from marketmind_ai.llm.gemini import GeminiProvider
-from marketmind_ai.llm.schemas import DeferralRequest, Decision
+from marketmind_ai.llm.schemas import DeferralRequest, Decision, WatchlistSelection
 
 __all__ = [
     "DeferralRequest",
@@ -16,5 +16,6 @@ __all__ = [
     "DecisionError",
     "GeminiProvider",
     "LLMProvider",
+    "WatchlistSelection",
     "get_provider",
 ]

@@ -16,6 +16,7 @@ from marketmind_ai.decision_engine.context_builder import (
     DEFAULT_NEWS_DAYS_BACK,
     DEFAULT_NEWS_MAX_ITEMS,
     DEFAULT_PRICE_DAYS_BACK,
+    build_bootstrap_context,
     build_context,
 )
 
@@ -53,11 +54,18 @@ def _mock_company_event(mocker, ts, event_type):
     return row
 
 
-def _mock_portfolio(mocker, portfolio_id=PORTFOLIO_ID, name="test-portfolio", cash=10_000.0):
+def _mock_portfolio(
+    mocker,
+    portfolio_id=PORTFOLIO_ID,
+    name="test-portfolio",
+    cash=10_000.0,
+    strategy_prompt="strategia di test",
+):
     portfolio = mocker.Mock()
     portfolio.portfolio_id = portfolio_id
     portfolio.name = name
     portfolio.cash = cash
+    portfolio.strategy_prompt = strategy_prompt
     return portfolio
 
 
@@ -229,3 +237,39 @@ class TestBuildContext:
 
         mock_get_portfolio.assert_called_once_with(session, PORTFOLIO_ID)
         mock_get_positions.assert_called_once_with(session, PORTFOLIO_ID)
+
+
+def _mock_asset_row(mocker, symbol, name, sector, asset_type):
+    asset = mocker.Mock()
+    asset.symbol = symbol
+    asset.name = name
+    asset.sector = sector
+    asset.asset_type = asset_type
+    return asset
+
+
+class TestBuildBootstrapContext:
+    def test_includes_portfolio_strategy_and_whole_universe(self, mocker):
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(
+                mocker, portfolio_id=7, name="gemini-baseline", strategy_prompt="focus tech"
+            ),
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_decision_universe",
+            return_value=[
+                _mock_asset_row(mocker, "AAPL", "Apple Inc.", "Technology", "equity"),
+                _mock_asset_row(mocker, "XOM", "Exxon Mobil", "Energy", "equity"),
+            ],
+        )
+        session = mocker.Mock()
+
+        context = build_bootstrap_context(session, portfolio_id=7)
+
+        assert context.portfolio_id == 7
+        assert context.portfolio_name == "gemini-baseline"
+        assert context.strategy_prompt == "focus tech"
+        assert len(context.universe) == 2
+        assert context.universe[0].symbol == "AAPL"
+        assert context.universe[0].sector == "Technology"
