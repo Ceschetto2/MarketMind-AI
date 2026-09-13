@@ -12,10 +12,18 @@ from marketmind_ai.decision_engine.schemas import (
     DecisionContext,
     MacroSnippet,
     NewsSnippet,
+    PortfolioPositionSnippet,
+    PortfolioState,
     PricePoint,
 )
 
 AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
+
+
+def _empty_portfolio_state(**overrides) -> PortfolioState:
+    defaults = dict(portfolio_id=1, name="test-portfolio", cash=10_000.0, positions=[])
+    defaults.update(overrides)
+    return PortfolioState(**defaults)
 
 
 class TestDecisionContext:
@@ -24,6 +32,7 @@ class TestDecisionContext:
             asset_id=42,
             symbol="AAPL",
             as_of=AS_OF,
+            portfolio=_empty_portfolio_state(),
             prices=[PricePoint(ts=AS_OF, close=150.0)],
             news=[NewsSnippet(ts=AS_OF, headline="Apple annuncia...", sentiment_score=0.3)],
             macro_events=[MacroSnippet(indicator="UNRATE", ts=date(2026, 8, 1), value=4.1)],
@@ -32,6 +41,7 @@ class TestDecisionContext:
 
         assert context.asset_id == 42
         assert context.symbol == "AAPL"
+        assert context.portfolio.cash == 10_000.0
         assert len(context.prices) == 1
         assert len(context.news) == 1
         assert len(context.macro_events) == 1
@@ -42,6 +52,7 @@ class TestDecisionContext:
             asset_id=42,
             symbol="AAPL",
             as_of=AS_OF,
+            portfolio=_empty_portfolio_state(),
             prices=[],
             news=[],
             macro_events=[],
@@ -56,6 +67,9 @@ class TestDecisionContext:
             asset_id=42,
             symbol="AAPL",
             as_of=AS_OF,
+            portfolio=_empty_portfolio_state(
+                positions=[PortfolioPositionSnippet(symbol="AAPL", quantity=10.0, avg_price=140.0)]
+            ),
             prices=[PricePoint(ts=AS_OF, close=150.0)],
             news=[],
             macro_events=[],
@@ -67,6 +81,7 @@ class TestDecisionContext:
         assert dumped["symbol"] == "AAPL"
         assert isinstance(dumped["as_of"], str)
         assert isinstance(dumped["prices"][0]["ts"], str)
+        assert dumped["portfolio"]["positions"][0]["symbol"] == "AAPL"
 
 
 class TestNewsSnippet:
@@ -81,3 +96,21 @@ class TestMacroSnippet:
         snippet = MacroSnippet(indicator="UNRATE", ts=date(2026, 8, 1))
 
         assert snippet.value is None
+
+
+class TestPortfolioState:
+    def test_valid_construction_with_positions(self):
+        state = PortfolioState(
+            portfolio_id=1,
+            name="gemini-baseline",
+            cash=50_000.0,
+            positions=[PortfolioPositionSnippet(symbol="MSFT", quantity=5.0, avg_price=300.0)],
+        )
+
+        assert state.cash == 50_000.0
+        assert state.positions[0].symbol == "MSFT"
+
+    def test_empty_positions_is_valid(self):
+        state = _empty_portfolio_state()
+
+        assert state.positions == []

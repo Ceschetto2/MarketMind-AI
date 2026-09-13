@@ -1,8 +1,7 @@
 """Test unitari per `decision_engine/engine.py`.
 
-Nessun accesso a rete/DB: sessione, lettura dell'universo, context builder e
-scritture sono tutte mockate con `pytest-mock`, come per il `run()` delle
-pipeline di ingestion (`test_finnhub_earnings_pipeline.py::TestRun`).
+Nessun accesso a rete/DB: sessione, lettura dell'universo/portfolio, context
+builder, provider e scritture sono tutte mockate con `pytest-mock`.
 """
 
 from __future__ import annotations
@@ -23,19 +22,33 @@ def _mock_asset(mocker, asset_id, symbol):
     return asset
 
 
-def _patch_common(mocker, universe):
+def _mock_portfolio(mocker, portfolio_id, llm_provider="gemini", model_version="v1"):
+    portfolio = mocker.Mock()
+    portfolio.portfolio_id = portfolio_id
+    portfolio.llm_provider = llm_provider
+    portfolio.model_version = model_version
+    return portfolio
+
+
+def _patch_common(mocker, portfolios, universe, providers=None):
     mock_session = mocker.MagicMock(name="session")
     mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
     mock_get_session.return_value.__enter__.return_value = mock_session
 
     mocker.patch(
+        "marketmind_ai.decision_engine.engine.get_active_model_portfolios",
+        return_value=portfolios,
+    )
+    mocker.patch(
         "marketmind_ai.decision_engine.engine.get_decision_universe", return_value=universe
     )
     mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
-    mock_build_context.side_effect = lambda session, asset_id, symbol, as_of: mocker.Mock(
-        asset_id=asset_id,
-        symbol=symbol,
-        model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+    mock_build_context.side_effect = (
+        lambda session, asset_id, symbol, portfolio_id, as_of: mocker.Mock(
+            asset_id=asset_id,
+            symbol=symbol,
+            model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+        )
     )
     mock_create_run = mocker.patch(
         "marketmind_ai.decision_engine.engine.create_model_run", return_value=1
@@ -43,72 +56,130 @@ def _patch_common(mocker, universe):
     mock_write_decision = mocker.patch(
         "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
     )
-    return mock_create_run, mock_write_decision, mock_build_context
+    mock_get_provider = mocker.patch(
+        "marketmind_ai.decision_engine.engine.get_provider",
+        side_effect=providers if providers is not None else [mocker.Mock()] * 10,
+    )
+    return mock_create_run, mock_write_decision, mock_build_context, mock_get_provider
 
 
 class TestRunWeeklyDecisions:
-    def test_writes_a_decision_per_asset(self, mocker):
-        universe = [
-            _mock_asset(mocker, 1, "AAPL"),
-            _mock_asset(mocker, 2, "MSFT"),
-        ]
-        _, mock_write_decision, _ = _patch_common(mocker, universe)
+    def test_writes_a_decision_per_asset_per_portfolio(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL"), _mock_asset(mocker, 2, "MSFT")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="HOLD")
-
-        run_weekly_decisions(
-            provider, llm_provider_name="gemini", model_version="v1", as_of=AS_OF
+        _, mock_write_decision, _, _ = _patch_common(
+            mocker, portfolios, universe, providers=[provider]
         )
+
+        run_weekly_decisions(as_of=AS_OF)
 
         assert provider.decide.call_count == 2
         assert mock_write_decision.call_count == 2
 
-    def test_decision_error_on_one_asset_does_not_block_the_others(self, mocker):
-        universe = [
-            _mock_asset(mocker, 1, "AAPL"),
-            _mock_asset(mocker, 2, "MSFT"),
+    def test_two_active_portfolios_each_get_their_own_run_and_provider(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [
+            _mock_portfolio(mocker, portfolio_id=10, llm_provider="gemini", model_version="a"),
+            _mock_portfolio(mocker, portfolio_id=20, llm_provider="gemini", model_version="b"),
         ]
-        _, mock_write_decision, _ = _patch_common(mocker, universe)
-        provider = mocker.Mock()
-        provider.decide.side_effect = [DecisionError("risposta non valida"), Decision(decision="HOLD")]
-
-        run_weekly_decisions(
-            provider, llm_provider_name="gemini", model_version="v1", as_of=AS_OF
+        provider_a, provider_b = mocker.Mock(), mocker.Mock()
+        provider_a.decide.return_value = Decision(decision="BUY")
+        provider_b.decide.return_value = Decision(decision="SELL")
+        mock_create_run, mock_write_decision, _, mock_get_provider = _patch_common(
+            mocker, portfolios, universe, providers=[provider_a, provider_b]
         )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        assert mock_get_provider.call_count == 2
+        mock_get_provider.assert_any_call(name="gemini", model="a", api_key=None)
+        mock_get_provider.assert_any_call(name="gemini", model="b", api_key=None)
+        assert mock_create_run.call_count == 2
+        assert mock_write_decision.call_count == 2
+
+    def test_decision_error_on_one_asset_does_not_block_the_others(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL"), _mock_asset(mocker, 2, "MSFT")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.side_effect = [
+            DecisionError("risposta non valida"),
+            Decision(decision="HOLD"),
+        ]
+        _, mock_write_decision, _, _ = _patch_common(
+            mocker, portfolios, universe, providers=[provider]
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
 
         assert provider.decide.call_count == 2
         assert mock_write_decision.call_count == 1
 
-    def test_creates_model_run_with_provider_metadata(self, mocker):
-        mock_create_run, _, _ = _patch_common(mocker, [])
-        provider = mocker.Mock()
-
-        run_weekly_decisions(
-            provider, llm_provider_name="gemini", model_version="gemini-2.5-flash", as_of=AS_OF
+    def test_decision_error_on_one_portfolio_does_not_block_the_others(self, mocker):
+        """Isolamento: un portfolio la cui chiamata fallisce non deve
+        impedire agli altri portfolio di completare il proprio run."""
+        universe = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [
+            _mock_portfolio(mocker, portfolio_id=10),
+            _mock_portfolio(mocker, portfolio_id=20),
+        ]
+        failing_provider = mocker.Mock()
+        failing_provider.decide.side_effect = DecisionError("fallita")
+        working_provider = mocker.Mock()
+        working_provider.decide.return_value = Decision(decision="HOLD")
+        _, mock_write_decision, _, _ = _patch_common(
+            mocker, portfolios, universe, providers=[failing_provider, working_provider]
         )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        assert mock_write_decision.call_count == 1
+
+    def test_creates_model_run_with_portfolio_metadata(self, mocker):
+        portfolios = [
+            _mock_portfolio(mocker, portfolio_id=10, llm_provider="gemini", model_version="v2")
+        ]
+        mock_create_run, _, _, _ = _patch_common(mocker, portfolios, [])
+
+        run_weekly_decisions(as_of=AS_OF)
 
         mock_create_run.assert_called_once()
         _, kwargs = mock_create_run.call_args
+        assert kwargs["portfolio_id"] == 10
         assert kwargs["llm_provider"] == "gemini"
-        assert kwargs["model_version"] == "gemini-2.5-flash"
+        assert kwargs["model_version"] == "v2"
         assert kwargs["ts"] == AS_OF
 
-    def test_empty_universe_still_creates_a_run(self, mocker):
-        mock_create_run, mock_write_decision, _ = _patch_common(mocker, [])
-        provider = mocker.Mock()
+    def test_no_active_portfolios_creates_no_run(self, mocker):
+        mock_create_run, mock_write_decision, _, _ = _patch_common(mocker, [], [])
 
-        run_weekly_decisions(
-            provider, llm_provider_name="gemini", model_version="v1", as_of=AS_OF
-        )
+        run_weekly_decisions(as_of=AS_OF)
 
-        mock_create_run.assert_called_once()
+        mock_create_run.assert_not_called()
         mock_write_decision.assert_not_called()
 
     def test_defaults_as_of_to_now_when_omitted(self, mocker):
-        mock_create_run, _, mock_build_context = _patch_common(mocker, [])
-        provider = mocker.Mock()
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        mock_create_run, _, _, _ = _patch_common(mocker, portfolios, [])
 
-        run_weekly_decisions(provider, llm_provider_name="gemini", model_version="v1")
+        run_weekly_decisions()
 
         _, kwargs = mock_create_run.call_args
         assert kwargs["ts"].tzinfo is not None
+
+    def test_context_is_built_with_this_portfolios_id(self, mocker):
+        """Isolamento: il context di ogni asset è costruito con il
+        portfolio_id del portfolio corrente, mai di un altro."""
+        universe = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=42)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="HOLD")
+        _, _, mock_build_context, _ = _patch_common(
+            mocker, portfolios, universe, providers=[provider]
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        _, kwargs = mock_build_context.call_args
+        assert kwargs["portfolio_id"] == 42

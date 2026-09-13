@@ -1,9 +1,10 @@
 """Test unitari per `decision_engine/context_builder.py`.
 
-Nessun accesso a DB: le funzioni di `db/context_reader.py` sono mockate con
-`pytest-mock`. Lo scopo è la composizione (quali finestre passa, come
-converte le righe ORM in snippet Pydantic), non le query in sé (già coperte
-da `tests/integration/test_context_reader.py`).
+Nessun accesso a DB: le funzioni di `db/context_reader.py` e
+`db/portfolio_reader.py` sono mockate con `pytest-mock`. Lo scopo è la
+composizione (quali finestre passa, come converte le righe ORM in snippet
+Pydantic, come isola lo stato del portfolio), non le query in sé (già
+coperte dai rispettivi test di integrazione).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from marketmind_ai.decision_engine.context_builder import (
 )
 
 AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
+PORTFOLIO_ID = 7
 
 
 def _mock_price(mocker, ts, close):
@@ -51,6 +53,39 @@ def _mock_company_event(mocker, ts, event_type):
     return row
 
 
+def _mock_portfolio(mocker, portfolio_id=PORTFOLIO_ID, name="test-portfolio", cash=10_000.0):
+    portfolio = mocker.Mock()
+    portfolio.portfolio_id = portfolio_id
+    portfolio.name = name
+    portfolio.cash = cash
+    return portfolio
+
+
+def _mock_position(mocker, symbol, quantity, avg_price):
+    position = mocker.Mock()
+    position.asset = mocker.Mock(symbol=symbol)
+    position.quantity = quantity
+    position.avg_price = avg_price
+    return position
+
+
+def _patch_empty_market_data(mocker):
+    mocker.patch(
+        "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
+    )
+    mocker.patch(
+        "marketmind_ai.decision_engine.context_builder.get_recent_news", return_value=[]
+    )
+    mocker.patch(
+        "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
+        return_value=[],
+    )
+    mocker.patch(
+        "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+        return_value=[],
+    )
+
+
 class TestBuildContext:
     def test_uses_default_windows_when_not_overridden(self, mocker):
         mock_prices = mocker.patch(
@@ -67,9 +102,17 @@ class TestBuildContext:
             "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
             return_value=[],
         )
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(mocker),
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            return_value=[],
+        )
         session = mocker.Mock()
 
-        build_context(session, asset_id=42, symbol="AAPL", as_of=AS_OF)
+        build_context(session, asset_id=42, symbol="AAPL", portfolio_id=PORTFOLIO_ID, as_of=AS_OF)
 
         mock_prices.assert_called_once_with(
             session, 42, as_of=AS_OF, days_back=DEFAULT_PRICE_DAYS_BACK
@@ -87,44 +130,44 @@ class TestBuildContext:
         )
 
     def test_accepts_window_overrides(self, mocker):
+        _patch_empty_market_data(mocker)
         mock_prices = mocker.patch(
             "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_news", return_value=[]
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(mocker),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
-            return_value=[],
-        )
-        mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
 
-        build_context(session, asset_id=42, symbol="AAPL", as_of=AS_OF, price_days_back=60)
+        build_context(
+            session,
+            asset_id=42,
+            symbol="AAPL",
+            portfolio_id=PORTFOLIO_ID,
+            as_of=AS_OF,
+            price_days_back=60,
+        )
 
         mock_prices.assert_called_once_with(session, 42, as_of=AS_OF, days_back=60)
 
     def test_defaults_as_of_to_now_when_omitted(self, mocker):
+        _patch_empty_market_data(mocker)
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(mocker),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_news", return_value=[]
-        )
-        mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
-            return_value=[],
-        )
-        mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
 
-        context = build_context(session, asset_id=42, symbol="AAPL")
+        context = build_context(session, asset_id=42, symbol="AAPL", portfolio_id=PORTFOLIO_ID)
 
         assert context.as_of.tzinfo is not None
 
@@ -145,9 +188,17 @@ class TestBuildContext:
             "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
             return_value=[_mock_company_event(mocker, date(2026, 8, 15), "earnings")],
         )
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(mocker, cash=25_000.0),
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            return_value=[_mock_position(mocker, "MSFT", 5.0, 300.0)],
+        )
         session = mocker.Mock()
 
-        context = build_context(session, asset_id=42, symbol="AAPL", as_of=AS_OF)
+        context = build_context(session, asset_id=42, symbol="AAPL", portfolio_id=PORTFOLIO_ID, as_of=AS_OF)
 
         assert context.asset_id == 42
         assert context.symbol == "AAPL"
@@ -155,3 +206,26 @@ class TestBuildContext:
         assert context.news[0].headline == "titolo"
         assert context.macro_events[0].indicator == "UNRATE"
         assert context.company_events[0].event_type == "earnings"
+        assert context.portfolio.portfolio_id == PORTFOLIO_ID
+        assert context.portfolio.cash == 25_000.0
+        assert context.portfolio.positions[0].symbol == "MSFT"
+        assert context.portfolio.positions[0].quantity == 5.0
+
+    def test_only_reads_state_of_the_given_portfolio(self, mocker):
+        """L'isolamento richiesto dal disegno: build_context non deve mai
+        interrogare più portfolio insieme."""
+        _patch_empty_market_data(mocker)
+        mock_get_portfolio = mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            return_value=_mock_portfolio(mocker),
+        )
+        mock_get_positions = mocker.patch(
+            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            return_value=[],
+        )
+        session = mocker.Mock()
+
+        build_context(session, asset_id=42, symbol="AAPL", portfolio_id=PORTFOLIO_ID, as_of=AS_OF)
+
+        mock_get_portfolio.assert_called_once_with(session, PORTFOLIO_ID)
+        mock_get_positions.assert_called_once_with(session, PORTFOLIO_ID)

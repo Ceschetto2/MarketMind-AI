@@ -34,6 +34,9 @@ class ModelRun(Base):
     __table_args__ = {"schema": SCHEMA}
 
     run_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("portfolio.t_portfolios.portfolio_id"), nullable=False
+    )
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False)
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=False)

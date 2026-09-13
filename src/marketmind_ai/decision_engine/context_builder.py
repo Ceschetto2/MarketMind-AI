@@ -1,6 +1,6 @@
-"""L'Historical Context Builder: per un asset e un `as_of`, ricostruisce
-esattamente ciò che era noto fino a quel momento e lo confeziona in un
-`DecisionContext` pronto per `LLMProvider.decide()`.
+"""L'Historical Context Builder: per un asset, un portfolio e un `as_of`,
+ricostruisce esattamente ciò che era noto fino a quel momento e lo
+confeziona in un `DecisionContext` pronto per `LLMProvider.decide()`.
 
 Le finestre di default sono qui, non in `db/context_reader.py`: quella è
 logica di windowing, responsabilità di questo modulo — `db/` resta un
@@ -9,6 +9,11 @@ storico, poche news), scelta deliberata per contenere i token di prompt su
 ~500 asset/settimana; ogni finestra resta un parametro esplicito di
 `build_context()` così un futuro Decision Engine più agentico potrà
 sceglierle diversamente per asset o per richiesta, senza cambiare firma.
+
+Lo stato del portfolio è letto isolatamente: `get_portfolio`/
+`get_portfolio_positions` prendono un solo `portfolio_id` alla volta, mai un
+elenco — questa funzione non deve poter vedere lo stato di un portfolio
+diverso da quello per cui sta decidendo.
 """
 
 from __future__ import annotations
@@ -23,11 +28,14 @@ from marketmind_ai.db.context_reader import (
     get_recent_news,
     get_recent_prices,
 )
+from marketmind_ai.db.portfolio_reader import get_portfolio, get_portfolio_positions
 from marketmind_ai.decision_engine.schemas import (
     CompanyEventSnippet,
     DecisionContext,
     MacroSnippet,
     NewsSnippet,
+    PortfolioPositionSnippet,
+    PortfolioState,
     PricePoint,
 )
 
@@ -41,13 +49,15 @@ def build_context(
     session: Session,
     asset_id: int,
     symbol: str,
+    portfolio_id: int,
     as_of: datetime | None = None,
     price_days_back: int = DEFAULT_PRICE_DAYS_BACK,
     news_days_back: int = DEFAULT_NEWS_DAYS_BACK,
     news_max_items: int = DEFAULT_NEWS_MAX_ITEMS,
     company_event_days_back: int = DEFAULT_COMPANY_EVENT_DAYS_BACK,
 ) -> DecisionContext:
-    """Costruisce il `DecisionContext` di `asset_id` a `as_of` (default: ora).
+    """Costruisce il `DecisionContext` di `asset_id` a `as_of` (default: ora)
+    per il portfolio `portfolio_id`.
 
     Gli eventi macro non sono filtrati per asset (`t_macro_events` non ha
     `asset_id`, per disegno — un indicatore come `UNRATE` non appartiene a
@@ -66,10 +76,24 @@ def build_context(
         session, asset_id, as_of=as_of, days_back=company_event_days_back
     )
 
+    portfolio = get_portfolio(session, portfolio_id)
+    positions = get_portfolio_positions(session, portfolio_id)
+
     return DecisionContext(
         asset_id=asset_id,
         symbol=symbol,
         as_of=as_of,
+        portfolio=PortfolioState(
+            portfolio_id=portfolio.portfolio_id,
+            name=portfolio.name,
+            cash=portfolio.cash,
+            positions=[
+                PortfolioPositionSnippet(
+                    symbol=p.asset.symbol, quantity=p.quantity, avg_price=p.avg_price
+                )
+                for p in positions
+            ],
+        ),
         prices=[PricePoint(ts=p.ts, close=p.close) for p in prices],
         news=[
             NewsSnippet(ts=n.ts, headline=n.headline, sentiment_score=n.sentiment_score)

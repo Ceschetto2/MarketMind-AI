@@ -33,6 +33,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Double,
     ForeignKey,
@@ -72,6 +73,9 @@ class Portfolio(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    llm_provider: Mapped[str | None] = mapped_column(Text)
+    model_version: Mapped[str | None] = mapped_column(Text)
 
     positions: Mapped[list["PortfolioPosition"]] = relationship(
         back_populates="portfolio"
@@ -80,6 +84,10 @@ class Portfolio(Base):
     __table_args__ = (
         CheckConstraint(
             "portfolio_type IN ('model', 'benchmark')", name="portfolio_type"
+        ),
+        CheckConstraint(
+            "portfolio_type <> 'model' OR (llm_provider IS NOT NULL AND model_version IS NOT NULL)",
+            name="llm_settings_required_for_model",
         ),
         {"schema": SCHEMA},
     )
@@ -109,6 +117,11 @@ class PortfolioPosition(Base):
     )
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="positions")
+    # Nessun back_populates: Asset (market_data.py) non ha bisogno di un
+    # accesso inverso a "in quali portfolio è tenuto" — qui serve solo per
+    # risalire al symbol da un asset_id senza una query separata (Historical
+    # Context Builder, db/portfolio_reader.py).
+    asset: Mapped["Asset"] = relationship()
 
     __table_args__ = {"schema": SCHEMA}
 

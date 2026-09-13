@@ -18,16 +18,24 @@ from marketmind_ai.llm.schemas import Decision
 
 def create_model_run(
     session: Session,
+    portfolio_id: int,
     ts: datetime,
     config: dict,
     llm_provider: str,
     model_version: str,
 ) -> int:
-    """Registra una esecuzione del motore decisionale (batch settimanale su
-    tutti gli asset dell'universo). `config` è la configurazione con cui è
-    girato il run (es. le finestre del context builder), utile per audit e
-    riproducibilità."""
-    run = ModelRun(ts=ts, config=config, llm_provider=llm_provider, model_version=model_version)
+    """Registra una esecuzione del motore decisionale per un portfolio (un
+    run appartiene a un solo portfolio, mai più un run universale
+    sull'intero universo condiviso tra portfolio). `config` è la
+    configurazione con cui è girato il run (es. le finestre del context
+    builder), utile per audit e riproducibilità."""
+    run = ModelRun(
+        portfolio_id=portfolio_id,
+        ts=ts,
+        config=config,
+        llm_provider=llm_provider,
+        model_version=model_version,
+    )
     session.add(run)
     session.flush()
     return run.run_id

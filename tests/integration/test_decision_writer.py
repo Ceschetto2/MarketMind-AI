@@ -14,11 +14,13 @@ from sqlalchemy import select
 from marketmind_ai.db.decision_writer import create_model_run, write_model_decision
 from marketmind_ai.db.models.decisions import ModelDecision, ModelRun
 from marketmind_ai.db.models.market_data import Asset
+from marketmind_ai.db.models.portfolio import Portfolio
 from marketmind_ai.llm.schemas import Decision
 
 pytestmark = pytest.mark.integration
 
 TEST_ASSET_ID = -1
+TEST_PORTFOLIO_ID = -1
 AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
 
 
@@ -37,29 +39,57 @@ def _make_asset(session) -> int:
     return asset.asset_id
 
 
+def _make_portfolio(session) -> int:
+    portfolio = Portfolio(
+        portfolio_id=TEST_PORTFOLIO_ID,
+        name="test-portfolio",
+        portfolio_type="model",
+        starting_capital=100_000.0,
+        cash=100_000.0,
+        equity_value=100_000.0,
+        created_at=datetime.now(timezone.utc),
+        is_active=True,
+        llm_provider="gemini",
+        model_version="gemini-3.6-flash",
+    )
+    session.add(portfolio)
+    session.flush()
+    return portfolio.portfolio_id
+
+
 class TestCreateModelRun:
     def test_creates_row_and_returns_run_id(self, db_session):
+        portfolio_id = _make_portfolio(db_session)
+
         run_id = create_model_run(
             db_session,
+            portfolio_id=portfolio_id,
             ts=AS_OF,
             config={"price_days_back": 30},
             llm_provider="gemini",
-            model_version="gemini-2.5-flash",
+            model_version="gemini-3.6-flash",
         )
 
         row = db_session.execute(
             select(ModelRun).where(ModelRun.run_id == run_id)
         ).scalar_one()
+        assert row.portfolio_id == portfolio_id
         assert row.llm_provider == "gemini"
-        assert row.model_version == "gemini-2.5-flash"
+        assert row.model_version == "gemini-3.6-flash"
         assert row.config == {"price_days_back": 30}
 
 
 class TestWriteModelDecision:
     def test_creates_row_linked_to_run_and_asset(self, db_session):
         asset_id = _make_asset(db_session)
+        portfolio_id = _make_portfolio(db_session)
         run_id = create_model_run(
-            db_session, ts=AS_OF, config={}, llm_provider="gemini", model_version="v1"
+            db_session,
+            portfolio_id=portfolio_id,
+            ts=AS_OF,
+            config={},
+            llm_provider="gemini",
+            model_version="v1",
         )
         decision = Decision(decision="BUY", confidence=0.7, reasoning="momentum positivo")
 
