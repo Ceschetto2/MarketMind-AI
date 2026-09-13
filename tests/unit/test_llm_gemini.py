@@ -33,6 +33,20 @@ class TestDecide:
 
         assert decision == Decision(decision="BUY", confidence=0.7, reasoning="trend positivo")
 
+    def test_strips_markdown_fence_before_validating(self, mocker):
+        provider = GeminiProvider(api_key="fake-key")
+        fenced_json = (
+            '```json\n{"decision": "BUY", "confidence": 0.85, "reasoning": "trend"}\n```'
+        )
+        mocker.patch(
+            "marketmind_ai.llm.gemini._call_gemini",
+            return_value=_mock_response(mocker, fenced_json),
+        )
+
+        decision = provider.decide({"symbol": "AAPL"})
+
+        assert decision == Decision(decision="BUY", confidence=0.85, reasoning="trend")
+
     def test_raises_decision_error_on_invalid_json(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mocker.patch(

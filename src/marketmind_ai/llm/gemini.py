@@ -3,16 +3,24 @@
 SDK nativo `google-genai`, senza tool-use/function-calling: la prima
 decisione BUY/SELL/HOLD non ne ha bisogno, il function-calling per il
 retrieval agentic (§2.4 di `Market Mind AI.md`) è rimandato a quando
-servirà davvero. `response_schema=Decision` chiede a Gemini output
-strutturato lato API, ma il parsing/validazione Pydantic locale su
-`response.text` resta comunque il controllo finale — non ci si fida
-ciecamente del rispetto dello schema lato provider.
+servirà davvero. `response_schema=Decision` chiede output strutturato lato
+API, ma il parsing/validazione Pydantic locale su `response.text` resta
+comunque il controllo finale — non ci si fida ciecamente del rispetto dello
+schema lato provider.
+
+Nonostante il nome, `GeminiProvider` funziona anche con modelli Gemma
+(stesso client `google-genai`, stesso `response_schema`): `model` è un
+parametro del costruttore, non hardcoded a chiamata — verificato con
+`gemma-4-31b-it`, che però non rispetta `response_mime_type="application/
+json"` con la stessa affidabilità dei modelli Gemini propriamente detti
+(vedi `_strip_markdown_fence`).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from google import genai
@@ -30,6 +38,12 @@ logger = logging.getLogger(__name__)
 # scoperto in un test end-to-end reale, non dai test a priori — mockano il
 # client, non convalidano il nome modello contro l'API vera).
 _DEFAULT_MODEL = "gemini-3.6-flash"
+
+# Nessun timeout di default nell'SDK: una chiamata senza risposta (osservato
+# con un modello Gemma, restato appeso ~9h43m in un test end-to-end prima di
+# essere terminato a mano) altrimenti blocca il processo a tempo indefinito
+# — inaccettabile su un run settimanale con centinaia di chiamate.
+_REQUEST_TIMEOUT_MS = 30_000
 
 _SYSTEM_PROMPT = (
     "Sei il motore decisionale di una piattaforma di simulazione finanziaria. "
@@ -53,6 +67,7 @@ def _call_gemini(client: genai.Client, *, model: str, prompt: str) -> types.Gene
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=Decision,
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
         ),
     )
 
@@ -60,6 +75,21 @@ def _call_gemini(client: genai.Client, *, model: str, prompt: str) -> types.Gene
 def _build_prompt(context: dict[str, Any]) -> str:
     context_json = json.dumps(context, default=str, indent=2, ensure_ascii=False)
     return f"{_SYSTEM_PROMPT}\n\nContesto:\n{context_json}"
+
+
+_MARKDOWN_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
+
+
+def _strip_markdown_fence(text: str | None) -> str | None:
+    """Toglie un eventuale code fence markdown (` ```json ... ``` `) attorno
+    alla risposta. `response_mime_type="application/json"` non basta a
+    impedirlo su tutti i modelli — i modelli Gemini propriamente detti lo
+    rispettano, alcuni modelli Gemma osservati no (scoperto in un test
+    end-to-end reale con `gemma-4-31b-it`)."""
+    if not isinstance(text, str):
+        return text
+    match = _MARKDOWN_FENCE_RE.match(text.strip())
+    return match.group(1) if match else text
 
 
 class GeminiProvider:
@@ -80,7 +110,7 @@ class GeminiProvider:
             ) from exc
 
         try:
-            return Decision.model_validate_json(response.text)
+            return Decision.model_validate_json(_strip_markdown_fence(response.text))
         except (ValidationError, ValueError, TypeError) as exc:
             raise DecisionError(
                 f"risposta Gemini non valida rispetto a Decision: {response.text!r}"
