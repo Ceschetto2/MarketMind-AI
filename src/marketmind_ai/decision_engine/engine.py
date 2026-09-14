@@ -2,11 +2,15 @@
 'model' attivo, ciascuno con il proprio provider — mai condividono stato.
 
 Un portfolio non parte con lo scope dell'intero universo: va prima
-inizializzato (`initialize_portfolio()`, bootstrap — una singola chiamata
-`select_watchlist()`, non `decide()`) che sceglie quali asset osservare, in
-base alla sua strategia. `run_weekly_decisions()` gira solo su quello scope
-(`get_watchlist`); un portfolio mai inizializzato ha una watchlist vuota e
-il suo run produce zero decisioni, non un errore.
+inizializzato (`initialize_portfolio()`). Il bootstrap non si ferma alla
+scelta degli asset da osservare (`select_watchlist()`, non `decide()`): si
+conclude con un primo giro di `decide()` sulla watchlist appena scelta,
+nello stesso passo — un portfolio appena attivato ha subito un giudizio
+(anche HOLD, se il modello preferisce aspettare) su ogni asset che osserva,
+non aspetta la prossima cadenza settimanale ordinaria.
+`run_weekly_decisions()` gira sulla stessa watchlist (`get_watchlist`, non
+più l'universo condiviso); un portfolio mai inizializzato ha una watchlist
+vuota e il suo run produce zero decisioni, non un errore.
 
 Non ancora un entry point standalone (nessun `if __name__ == "__main__":`,
 nessun Quadlet/timer): il wiring per la cadenza settimanale è deliberatamente
@@ -21,6 +25,7 @@ from datetime import datetime, timezone
 
 from marketmind_ai.db.context_reader import get_decision_universe
 from marketmind_ai.db.decision_writer import create_model_run, write_model_decision
+from marketmind_ai.db.models.market_data import Asset
 from marketmind_ai.db.models.portfolio import Portfolio
 from marketmind_ai.db.portfolio_reader import (
     get_active_model_portfolios,
@@ -37,6 +42,7 @@ from marketmind_ai.decision_engine.context_builder import (
     build_bootstrap_context,
     build_context,
 )
+from marketmind_ai.llm.base import LLMProvider
 from marketmind_ai.llm.exceptions import DecisionError
 from marketmind_ai.llm.factory import get_provider
 
@@ -44,19 +50,28 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_portfolio(portfolio_id: int) -> None:
-    """Bootstrap: sceglie lo scope di asset di questo portfolio con
-    un'unica chiamata `select_watchlist()` (l'universo intero + la
-    strategia del portfolio), poi sostituisce la sua watchlist con la
-    selezione — un replace totale, non un merge (`write_watchlist`).
+    """Bootstrap di un portfolio, in due passi nello stesso giro.
 
-    Un `symbol` restituito dal modello che non corrisponde a nessun asset
-    dell'universo viene scartato con un warning, non propagato: la
-    selezione resta valida per la parte che si può risolvere.
+    Primo: sceglie lo scope di asset di questo portfolio con un'unica
+    chiamata `select_watchlist()` (l'universo intero + la strategia del
+    portfolio), poi sostituisce la sua watchlist con la selezione — un
+    replace totale, non un merge (`write_watchlist`). Un `symbol`
+    restituito dal modello che non corrisponde a nessun asset dell'universo
+    viene scartato con un warning, non propagato.
+
+    Secondo: gira subito un primo `_run_for_portfolio()` sulla watchlist
+    appena scelta, riusando lo stesso `provider` — un portfolio appena
+    attivato non aspetta la prossima cadenza settimanale per avere un primo
+    giudizio su ciò che osserva.
+
+    Se il bootstrap stesso fallisce (`select_watchlist()` solleva
+    `DecisionError`), l'eccezione si propaga: senza uno scope non c'è
+    nessun primo round da fare.
     """
     with get_session() as session:
         portfolio = get_portfolio(session, portfolio_id)
         context = build_bootstrap_context(session, portfolio_id)
-        universe_by_symbol = {a.symbol: a.asset_id for a in get_decision_universe(session)}
+        universe_by_symbol = {a.symbol: a for a in get_decision_universe(session)}
 
     provider = get_provider(name=portfolio.llm_provider, model=portfolio.model_version, api_key=None)
 
@@ -66,25 +81,32 @@ def initialize_portfolio(portfolio_id: int) -> None:
         logger.exception("bootstrap fallito per il portfolio %s", portfolio_id)
         raise
 
-    asset_ids = []
+    resolved_assets: list[Asset] = []
     for symbol in selection.symbols:
-        asset_id = universe_by_symbol.get(symbol)
-        if asset_id is None:
+        asset = universe_by_symbol.get(symbol)
+        if asset is None:
             logger.warning(
                 "select_watchlist ha restituito %r, non nell'universo — scartato", symbol
             )
             continue
-        asset_ids.append(asset_id)
+        resolved_assets.append(asset)
 
     with get_session() as session:
-        write_watchlist(session, portfolio_id, asset_ids, added_at=datetime.now(timezone.utc))
+        write_watchlist(
+            session,
+            portfolio_id,
+            [a.asset_id for a in resolved_assets],
+            added_at=datetime.now(timezone.utc),
+        )
 
     logger.info(
         "bootstrap completato per il portfolio %d: %d/%d symbol validi",
         portfolio_id,
-        len(asset_ids),
+        len(resolved_assets),
         len(selection.symbols),
     )
+
+    _run_for_portfolio(portfolio, resolved_assets, provider, datetime.now(timezone.utc))
 
 
 def run_weekly_decisions(as_of: datetime | None = None) -> None:
@@ -102,17 +124,19 @@ def run_weekly_decisions(as_of: datetime | None = None) -> None:
 
     for portfolio in portfolios:
         try:
-            _run_for_portfolio(portfolio, as_of)
+            provider = get_provider(
+                name=portfolio.llm_provider, model=portfolio.model_version, api_key=None
+            )
+            with get_session() as session:
+                watchlist = get_watchlist(session, portfolio.portfolio_id)
+            _run_for_portfolio(portfolio, watchlist, provider, as_of)
         except Exception:
             logger.exception("run fallito per il portfolio %s, salto", portfolio.portfolio_id)
 
 
-def _run_for_portfolio(portfolio: Portfolio, as_of: datetime) -> None:
-    provider = get_provider(name=portfolio.llm_provider, model=portfolio.model_version, api_key=None)
-
-    with get_session() as session:
-        watchlist = get_watchlist(session, portfolio.portfolio_id)
-
+def _run_for_portfolio(
+    portfolio: Portfolio, watchlist: list[Asset], provider: LLMProvider, as_of: datetime
+) -> None:
     run_id = _create_run(portfolio, as_of)
 
     decisions_written = 0

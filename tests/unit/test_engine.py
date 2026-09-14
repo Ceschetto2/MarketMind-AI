@@ -162,7 +162,7 @@ class TestRunWeeklyDecisions:
         mock_write_decision.assert_not_called()
 
     def test_empty_watchlist_writes_no_decisions_but_still_creates_a_run(self, mocker):
-        """Un portfolio mai inizializzato ha una watchlist vuota — non un errore."""
+        """Un portfolio con watchlist vuota (mai bootstrappato) — non un errore."""
         portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
         mock_create_run, mock_write_decision, _, _ = _patch_common(mocker, portfolios, [])
 
@@ -198,7 +198,13 @@ class TestRunWeeklyDecisions:
 
 
 class TestInitializePortfolio:
-    def _patch(self, mocker, universe, selection_symbols, reasoning=None):
+    """`initialize_portfolio()` non si ferma alla scelta della watchlist:
+    si conclude con un primo giro di `decide()` su ciò che ha appena
+    scelto — un portfolio appena attivato ha subito un giudizio (anche
+    HOLD) su ogni asset che osserva, non aspetta la prossima cadenza
+    settimanale."""
+
+    def _patch(self, mocker, universe, selection_symbols, reasoning=None, decide_return=None):
         mock_session = mocker.MagicMock(name="session")
         mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
@@ -218,17 +224,32 @@ class TestInitializePortfolio:
         provider.select_watchlist.return_value = WatchlistSelection(
             symbols=selection_symbols, reasoning=reasoning
         )
+        provider.decide.return_value = decide_return or Decision(decision="HOLD")
         mocker.patch(
             "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
         )
         mock_write_watchlist = mocker.patch(
             "marketmind_ai.decision_engine.engine.write_watchlist"
         )
-        return provider, mock_write_watchlist
+        mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
+        mock_build_context.side_effect = (
+            lambda session, asset_id, symbol, portfolio_id, as_of: mocker.Mock(
+                asset_id=asset_id,
+                symbol=symbol,
+                model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+            )
+        )
+        mock_create_run = mocker.patch(
+            "marketmind_ai.decision_engine.engine.create_model_run", return_value=1
+        )
+        mock_write_decision = mocker.patch(
+            "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
+        )
+        return provider, mock_write_watchlist, mock_create_run, mock_write_decision
 
     def test_writes_watchlist_with_resolved_asset_ids(self, mocker):
         universe = [_mock_asset(mocker, 1, "AAPL"), _mock_asset(mocker, 2, "MSFT")]
-        _, mock_write_watchlist = self._patch(mocker, universe, ["AAPL", "MSFT"])
+        _, mock_write_watchlist, _, _ = self._patch(mocker, universe, ["AAPL", "MSFT"])
 
         initialize_portfolio(7)
 
@@ -238,7 +259,7 @@ class TestInitializePortfolio:
 
     def test_discards_symbols_not_in_the_universe(self, mocker):
         universe = [_mock_asset(mocker, 1, "AAPL")]
-        _, mock_write_watchlist = self._patch(mocker, universe, ["AAPL", "NOTREAL"])
+        _, mock_write_watchlist, _, _ = self._patch(mocker, universe, ["AAPL", "NOTREAL"])
 
         initialize_portfolio(7)
 
@@ -247,7 +268,7 @@ class TestInitializePortfolio:
 
     def test_empty_selection_writes_an_empty_watchlist(self, mocker):
         universe = [_mock_asset(mocker, 1, "AAPL")]
-        _, mock_write_watchlist = self._patch(mocker, universe, [])
+        _, mock_write_watchlist, _, _ = self._patch(mocker, universe, [])
 
         initialize_portfolio(7)
 
@@ -256,16 +277,60 @@ class TestInitializePortfolio:
 
     def test_uses_this_portfolios_provider(self, mocker):
         universe = [_mock_asset(mocker, 1, "AAPL")]
-        provider, _ = self._patch(mocker, universe, ["AAPL"])
+        provider, _, _, _ = self._patch(mocker, universe, ["AAPL"])
 
         initialize_portfolio(7)
 
         provider.select_watchlist.assert_called_once()
 
-    def test_propagates_decision_error(self, mocker):
+    def test_propagates_decision_error_from_bootstrap(self, mocker):
         universe = [_mock_asset(mocker, 1, "AAPL")]
-        provider, _ = self._patch(mocker, universe, ["AAPL"])
+        provider, _, _, _ = self._patch(mocker, universe, ["AAPL"])
         provider.select_watchlist.side_effect = DecisionError("fallita")
 
         with pytest.raises(DecisionError):
             initialize_portfolio(7)
+
+    def test_runs_a_first_decision_round_on_the_new_watchlist(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL"), _mock_asset(mocker, 2, "MSFT")]
+        provider, _, mock_create_run, mock_write_decision = self._patch(
+            mocker, universe, ["AAPL", "MSFT"]
+        )
+
+        initialize_portfolio(7)
+
+        assert provider.decide.call_count == 2
+        mock_create_run.assert_called_once()
+        assert mock_write_decision.call_count == 2
+
+    def test_reuses_the_same_provider_for_bootstrap_and_first_decisions(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL")]
+        provider, _, _, _ = self._patch(mocker, universe, ["AAPL"])
+
+        initialize_portfolio(7)
+
+        provider.select_watchlist.assert_called_once()
+        provider.decide.assert_called_once()
+
+    def test_empty_selection_still_creates_a_run_with_no_decisions(self, mocker):
+        """Nessun asset scelto: il round di decisioni gira comunque (stesso
+        comportamento di run_weekly_decisions su una watchlist vuota) —
+        crea un run per audit, zero decisioni, non un errore."""
+        universe = [_mock_asset(mocker, 1, "AAPL")]
+        provider, _, mock_create_run, mock_write_decision = self._patch(mocker, universe, [])
+
+        initialize_portfolio(7)
+
+        provider.decide.assert_not_called()
+        mock_create_run.assert_called_once()
+        mock_write_decision.assert_not_called()
+
+    def test_decision_error_on_one_asset_does_not_block_the_first_round(self, mocker):
+        universe = [_mock_asset(mocker, 1, "AAPL"), _mock_asset(mocker, 2, "MSFT")]
+        provider, _, _, mock_write_decision = self._patch(mocker, universe, ["AAPL", "MSFT"])
+        provider.decide.side_effect = [DecisionError("fallita"), Decision(decision="HOLD")]
+
+        initialize_portfolio(7)
+
+        assert provider.decide.call_count == 2
+        assert mock_write_decision.call_count == 1
