@@ -32,6 +32,16 @@ def _mock_portfolio(mocker, portfolio_id, llm_provider="gemini", model_version="
     return portfolio
 
 
+def _mock_context(mocker, asset_id, symbol, close=100.0):
+    price_point = mocker.Mock(close=close) if close is not None else None
+    return mocker.Mock(
+        asset_id=asset_id,
+        symbol=symbol,
+        prices=[price_point] if price_point is not None else [],
+        model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+    )
+
+
 def _patch_common(mocker, portfolios, watchlist, providers=None):
     mock_session = mocker.MagicMock(name="session")
     mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
@@ -46,10 +56,8 @@ def _patch_common(mocker, portfolios, watchlist, providers=None):
     )
     mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
     mock_build_context.side_effect = (
-        lambda session, asset_id, symbol, portfolio_id, as_of: mocker.Mock(
-            asset_id=asset_id,
-            symbol=symbol,
-            model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+        lambda session, asset_id, symbol, portfolio_id, as_of: _mock_context(
+            mocker, asset_id, symbol
         )
     )
     mock_create_run = mocker.patch(
@@ -62,7 +70,8 @@ def _patch_common(mocker, portfolios, watchlist, providers=None):
         "marketmind_ai.decision_engine.engine.get_provider",
         side_effect=providers if providers is not None else [mocker.Mock()] * 10,
     )
-    return mock_create_run, mock_write_decision, mock_build_context, mock_get_provider
+    mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+    return mock_create_run, mock_write_decision, mock_build_context, mock_get_provider, mock_execute_trade
 
 
 class TestRunWeeklyDecisions:
@@ -71,7 +80,7 @@ class TestRunWeeklyDecisions:
         portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="HOLD")
-        _, mock_write_decision, _, _ = _patch_common(
+        _, mock_write_decision, _, _, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[provider]
         )
 
@@ -87,9 +96,9 @@ class TestRunWeeklyDecisions:
             _mock_portfolio(mocker, portfolio_id=20, llm_provider="gemini", model_version="b"),
         ]
         provider_a, provider_b = mocker.Mock(), mocker.Mock()
-        provider_a.decide.return_value = Decision(decision="BUY")
-        provider_b.decide.return_value = Decision(decision="SELL")
-        mock_create_run, mock_write_decision, _, mock_get_provider = _patch_common(
+        provider_a.decide.return_value = Decision(decision="BUY", size_pct=0.1)
+        provider_b.decide.return_value = Decision(decision="SELL", size_pct=0.1)
+        mock_create_run, mock_write_decision, _, mock_get_provider, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[provider_a, provider_b]
         )
 
@@ -109,7 +118,7 @@ class TestRunWeeklyDecisions:
             DecisionError("risposta non valida"),
             Decision(decision="HOLD"),
         ]
-        _, mock_write_decision, _, _ = _patch_common(
+        _, mock_write_decision, _, _, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[provider]
         )
 
@@ -130,7 +139,7 @@ class TestRunWeeklyDecisions:
         failing_provider.decide.side_effect = DecisionError("fallita")
         working_provider = mocker.Mock()
         working_provider.decide.return_value = Decision(decision="HOLD")
-        _, mock_write_decision, _, _ = _patch_common(
+        _, mock_write_decision, _, _, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[failing_provider, working_provider]
         )
 
@@ -142,7 +151,7 @@ class TestRunWeeklyDecisions:
         portfolios = [
             _mock_portfolio(mocker, portfolio_id=10, llm_provider="gemini", model_version="v2")
         ]
-        mock_create_run, _, _, _ = _patch_common(mocker, portfolios, [])
+        mock_create_run, _, _, _, _ = _patch_common(mocker, portfolios, [])
 
         run_weekly_decisions(as_of=AS_OF)
 
@@ -154,7 +163,7 @@ class TestRunWeeklyDecisions:
         assert kwargs["ts"] == AS_OF
 
     def test_no_active_portfolios_creates_no_run(self, mocker):
-        mock_create_run, mock_write_decision, _, _ = _patch_common(mocker, [], [])
+        mock_create_run, mock_write_decision, _, _, _ = _patch_common(mocker, [], [])
 
         run_weekly_decisions(as_of=AS_OF)
 
@@ -164,7 +173,7 @@ class TestRunWeeklyDecisions:
     def test_empty_watchlist_writes_no_decisions_but_still_creates_a_run(self, mocker):
         """Un portfolio con watchlist vuota (mai bootstrappato) — non un errore."""
         portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
-        mock_create_run, mock_write_decision, _, _ = _patch_common(mocker, portfolios, [])
+        mock_create_run, mock_write_decision, _, _, _ = _patch_common(mocker, portfolios, [])
 
         run_weekly_decisions(as_of=AS_OF)
 
@@ -173,7 +182,7 @@ class TestRunWeeklyDecisions:
 
     def test_defaults_as_of_to_now_when_omitted(self, mocker):
         portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
-        mock_create_run, _, _, _ = _patch_common(mocker, portfolios, [])
+        mock_create_run, _, _, _, _ = _patch_common(mocker, portfolios, [])
 
         run_weekly_decisions()
 
@@ -187,7 +196,7 @@ class TestRunWeeklyDecisions:
         portfolios = [_mock_portfolio(mocker, portfolio_id=42)]
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="HOLD")
-        _, _, mock_build_context, _ = _patch_common(
+        _, _, mock_build_context, _, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[provider]
         )
 
@@ -195,6 +204,117 @@ class TestRunWeeklyDecisions:
 
         _, kwargs = mock_build_context.call_args
         assert kwargs["portfolio_id"] == 42
+
+
+class TestTradeExecution:
+    """Un BUY/SELL non resta solo un giudizio: viene eseguito subito."""
+
+    def test_buy_executes_a_trade(self, mocker):
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="BUY", size_pct=0.2)
+        _, _, _, _, mock_execute_trade = _patch_common(
+            mocker, portfolios, watchlist, providers=[provider]
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        mock_execute_trade.assert_called_once()
+        args, _ = mock_execute_trade.call_args
+        assert args[1] == 10  # portfolio_id
+        assert args[2] == 1  # asset_id
+        assert args[3].decision == "BUY"
+
+    def test_sell_executes_a_trade(self, mocker):
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="SELL", size_pct=1.0)
+        _, _, _, _, mock_execute_trade = _patch_common(
+            mocker, portfolios, watchlist, providers=[provider]
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        mock_execute_trade.assert_called_once()
+
+    def test_hold_does_not_execute_a_trade(self, mocker):
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="HOLD")
+        _, _, _, _, mock_execute_trade = _patch_common(
+            mocker, portfolios, watchlist, providers=[provider]
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        mock_execute_trade.assert_not_called()
+
+    def test_trade_uses_the_most_recent_price_in_context(self, mocker):
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="BUY", size_pct=0.2)
+        mock_session = mocker.MagicMock(name="session")
+        mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_active_model_portfolios",
+            return_value=portfolios,
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_watchlist", return_value=watchlist
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.build_context",
+            return_value=_mock_context(mocker, 1, "AAPL", close=142.5),
+        )
+        mocker.patch("marketmind_ai.decision_engine.engine.create_model_run", return_value=1)
+        mocker.patch("marketmind_ai.decision_engine.engine.write_model_decision", return_value=99)
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
+        )
+        mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        _, kwargs = mock_execute_trade.call_args
+        assert kwargs["price"] == 142.5
+
+    def test_no_price_available_skips_trade_without_error(self, mocker):
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="BUY", size_pct=0.2)
+        mock_session = mocker.MagicMock(name="session")
+        mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_active_model_portfolios",
+            return_value=portfolios,
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_watchlist", return_value=watchlist
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.build_context",
+            return_value=_mock_context(mocker, 1, "AAPL", close=None),
+        )
+        mocker.patch("marketmind_ai.decision_engine.engine.create_model_run", return_value=1)
+        mock_write_decision = mocker.patch(
+            "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
+        )
+        mocker.patch(
+            "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
+        )
+        mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        mock_execute_trade.assert_not_called()
+        mock_write_decision.assert_called_once()
 
 
 class TestInitializePortfolio:
@@ -233,10 +353,8 @@ class TestInitializePortfolio:
         )
         mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
         mock_build_context.side_effect = (
-            lambda session, asset_id, symbol, portfolio_id, as_of: mocker.Mock(
-                asset_id=asset_id,
-                symbol=symbol,
-                model_dump=mocker.Mock(return_value={"asset_id": asset_id, "symbol": symbol}),
+            lambda session, asset_id, symbol, portfolio_id, as_of: _mock_context(
+                mocker, asset_id, symbol
             )
         )
         mock_create_run = mocker.patch(
@@ -245,6 +363,7 @@ class TestInitializePortfolio:
         mock_write_decision = mocker.patch(
             "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
         )
+        mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
         return provider, mock_write_watchlist, mock_create_run, mock_write_decision
 
     def test_writes_watchlist_with_resolved_asset_ids(self, mocker):

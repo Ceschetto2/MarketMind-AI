@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DeferralRequest(BaseModel):
@@ -46,12 +46,31 @@ class Decision(BaseModel):
     `context_snapshot`, che `decision_engine/` aggiunge al momento della
     persistenza. Dove persistere `defer`, se lo si persiste, è la stessa
     domanda ancora aperta.
+
+    `size_pct` è la size del trade, proposta dall'LLM stesso (non una
+    regola deterministica calcolata a valle): percentuale (0-1) del cash
+    disponibile da investire su un `BUY`, o della posizione corrente da
+    liquidare su un `SELL` — l'LLM ha già cash/posizioni nel context
+    package (`decision_engine.schemas.PortfolioState`), quindi può
+    proporre una size coerente con lo stato del portfolio. Obbligatorio
+    per `BUY`/`SELL`, vietato per `HOLD` (nessuna size ha senso se non si
+    fa nulla) — un `model_validator` lo impone qui, non lato API: Gemini
+    non genera schema JSON condizionali da un vincolo cross-field.
     """
 
     decision: Literal["BUY", "SELL", "HOLD"]
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     reasoning: Optional[str] = None
+    size_pct: Optional[float] = Field(default=None, ge=0, le=1)
     defer: Optional[DeferralRequest] = None
+
+    @model_validator(mode="after")
+    def _validate_size_pct(self) -> "Decision":
+        if self.decision in ("BUY", "SELL") and self.size_pct is None:
+            raise ValueError(f"size_pct è richiesto quando decision={self.decision!r}")
+        if self.decision == "HOLD" and self.size_pct is not None:
+            raise ValueError("size_pct non ha senso quando decision='HOLD'")
+        return self
 
 
 class WatchlistSelection(BaseModel):

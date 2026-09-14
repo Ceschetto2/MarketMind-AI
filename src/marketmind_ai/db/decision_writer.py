@@ -60,6 +60,7 @@ def write_model_decision(
         decision=decision.decision,
         confidence=decision.confidence,
         reasoning=decision.reasoning,
+        size_pct=decision.size_pct,
         context_snapshot=context_snapshot,
     )
     session.add(row)

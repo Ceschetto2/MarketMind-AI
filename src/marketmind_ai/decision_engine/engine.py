@@ -12,6 +12,16 @@ non aspetta la prossima cadenza settimanale ordinaria.
 più l'universo condiviso); un portfolio mai inizializzato ha una watchlist
 vuota e il suo run produce zero decisioni, non un errore.
 
+Un `BUY`/`SELL` non resta solo un giudizio: viene eseguito subito
+(`execute_trade`, `db/portfolio_writer.py`) nella stessa transazione della
+`ModelDecision` — cash e posizione si aggiornano nello stesso passo in cui
+la decisione si registra, mai in un secondo momento da un Backtesting
+Engine. La size del trade (`decision.size_pct`) è proposta dall'LLM
+stesso, non una regola deterministica qui dentro. Il prezzo di esecuzione
+è l'ultimo noto nel context package (`context.prices[-1]`, mai un dato
+futuro); se il context non ha prezzi per l'asset, il trade è saltato con
+un warning, non un errore che blocca il run.
+
 Non ancora un entry point standalone (nessun `if __name__ == "__main__":`,
 nessun Quadlet/timer): il wiring per la cadenza settimanale è deliberatamente
 rimandato. `initialize_portfolio()` è pensata per essere invocata da un
@@ -32,7 +42,7 @@ from marketmind_ai.db.portfolio_reader import (
     get_portfolio,
     get_watchlist,
 )
-from marketmind_ai.db.portfolio_writer import write_watchlist
+from marketmind_ai.db.portfolio_writer import execute_trade, write_watchlist
 from marketmind_ai.db.session import get_session
 from marketmind_ai.decision_engine.context_builder import (
     DEFAULT_COMPANY_EVENT_DAYS_BACK,
@@ -165,6 +175,21 @@ def _run_for_portfolio(
                 decision=decision,
                 context_snapshot=context.model_dump(mode="json"),
             )
+            if decision.decision in ("BUY", "SELL"):
+                if context.prices:
+                    execute_trade(
+                        session,
+                        portfolio.portfolio_id,
+                        asset.asset_id,
+                        decision,
+                        price=context.prices[-1].close,
+                    )
+                else:
+                    logger.warning(
+                        "nessun prezzo disponibile per %s (portfolio %s), trade non eseguito",
+                        asset.symbol,
+                        portfolio.portfolio_id,
+                    )
         decisions_written += 1
 
     logger.info(

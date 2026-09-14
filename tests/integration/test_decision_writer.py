@@ -92,7 +92,9 @@ class TestWriteModelDecision:
             llm_provider="gemini",
             model_version="v1",
         )
-        decision = Decision(decision="BUY", confidence=0.7, reasoning="momentum positivo")
+        decision = Decision(
+            decision="BUY", confidence=0.7, reasoning="momentum positivo", size_pct=0.2
+        )
 
         decision_id = write_model_decision(
             db_session,
@@ -111,4 +113,32 @@ class TestWriteModelDecision:
         assert row.decision == "BUY"
         assert row.confidence == 0.7
         assert row.reasoning == "momentum positivo"
+        assert row.size_pct == 0.2
         assert row.context_snapshot == {"symbol": "TESTX"}
+
+    def test_hold_persists_null_size_pct(self, db_session):
+        asset_id = _make_asset(db_session)
+        portfolio_id = _make_portfolio(db_session)
+        run_id = create_model_run(
+            db_session,
+            portfolio_id=portfolio_id,
+            ts=AS_OF,
+            config={},
+            llm_provider="gemini",
+            model_version="v1",
+        )
+        decision = Decision(decision="HOLD", reasoning="in attesa")
+
+        decision_id = write_model_decision(
+            db_session,
+            run_id=run_id,
+            asset_id=asset_id,
+            ts=AS_OF,
+            decision=decision,
+            context_snapshot={"symbol": "TESTX"},
+        )
+
+        row = db_session.execute(
+            select(ModelDecision).where(ModelDecision.decision_id == decision_id)
+        ).scalar_one()
+        assert row.size_pct is None

@@ -67,6 +67,7 @@ class ModelDecision(Base):
     decision: Mapped[str] = mapped_column(String(10), nullable=False)
     confidence: Mapped[float | None] = mapped_column(Double)
     reasoning: Mapped[str | None] = mapped_column(Text)
+    size_pct: Mapped[float | None] = mapped_column(Double)
     context_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     run: Mapped["ModelRun"] = relationship(back_populates="decisions_made")

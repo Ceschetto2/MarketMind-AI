@@ -15,11 +15,14 @@ from marketmind_ai.llm.schemas import Decision, DeferralRequest, WatchlistSelect
 
 class TestDecision:
     def test_valid_construction(self):
-        decision = Decision(decision="BUY", confidence=0.8, reasoning="momentum positivo")
+        decision = Decision(
+            decision="BUY", confidence=0.8, reasoning="momentum positivo", size_pct=0.2
+        )
 
         assert decision.decision == "BUY"
         assert decision.confidence == 0.8
         assert decision.reasoning == "momentum positivo"
+        assert decision.size_pct == 0.2
 
     def test_confidence_and_reasoning_default_to_none(self):
         decision = Decision(decision="HOLD")
@@ -39,7 +42,33 @@ class TestDecision:
     @pytest.mark.parametrize("confidence", [-0.1, 1.1])
     def test_rejects_confidence_outside_unit_interval(self, confidence):
         with pytest.raises(ValidationError):
-            Decision(decision="SELL", confidence=confidence)
+            Decision(decision="SELL", confidence=confidence, size_pct=0.5)
+
+
+class TestDecisionSizePct:
+    def test_hold_defaults_size_pct_to_none(self):
+        decision = Decision(decision="HOLD")
+
+        assert decision.size_pct is None
+
+    @pytest.mark.parametrize("decision_value", ["BUY", "SELL"])
+    def test_requires_size_pct_for_buy_and_sell(self, decision_value):
+        with pytest.raises(ValidationError):
+            Decision(decision=decision_value)
+
+    def test_forbids_size_pct_for_hold(self):
+        with pytest.raises(ValidationError):
+            Decision(decision="HOLD", size_pct=0.1)
+
+    @pytest.mark.parametrize("size_pct", [-0.1, 1.1])
+    def test_rejects_size_pct_outside_unit_interval(self, size_pct):
+        with pytest.raises(ValidationError):
+            Decision(decision="BUY", size_pct=size_pct)
+
+    def test_accepts_zero_size_pct(self):
+        decision = Decision(decision="SELL", size_pct=0.0)
+
+        assert decision.size_pct == 0.0
 
 
 class TestDeferralRequest:
