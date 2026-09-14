@@ -34,6 +34,9 @@ class ModelRun(Base):
     __table_args__ = {"schema": SCHEMA}
 
     run_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("portfolio.t_portfolios.portfolio_id"), nullable=False
+    )
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False)
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -64,6 +67,7 @@ class ModelDecision(Base):
     decision: Mapped[str] = mapped_column(String(10), nullable=False)
     confidence: Mapped[float | None] = mapped_column(Double)
     reasoning: Mapped[str | None] = mapped_column(Text)
+    size_pct: Mapped[float | None] = mapped_column(Double)
     context_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     run: Mapped["ModelRun"] = relationship(back_populates="decisions_made")

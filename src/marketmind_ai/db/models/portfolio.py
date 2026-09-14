@@ -33,6 +33,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Double,
     ForeignKey,
@@ -72,14 +73,26 @@ class Portfolio(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    llm_provider: Mapped[str | None] = mapped_column(Text)
+    model_version: Mapped[str | None] = mapped_column(Text)
+    strategy_prompt: Mapped[str | None] = mapped_column(Text)
 
     positions: Mapped[list["PortfolioPosition"]] = relationship(
+        back_populates="portfolio"
+    )
+    watchlist: Mapped[list["PortfolioWatchlistEntry"]] = relationship(
         back_populates="portfolio"
     )
 
     __table_args__ = (
         CheckConstraint(
             "portfolio_type IN ('model', 'benchmark')", name="portfolio_type"
+        ),
+        CheckConstraint(
+            "portfolio_type <> 'model' OR (llm_provider IS NOT NULL AND model_version IS NOT NULL "
+            "AND strategy_prompt IS NOT NULL)",
+            name="llm_settings_required_for_model",
         ),
         {"schema": SCHEMA},
     )
@@ -109,6 +122,11 @@ class PortfolioPosition(Base):
     )
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="positions")
+    # Nessun back_populates: Asset (market_data.py) non ha bisogno di un
+    # accesso inverso a "in quali portfolio è tenuto" — qui serve solo per
+    # risalire al symbol da un asset_id senza una query separata (Historical
+    # Context Builder, db/portfolio_reader.py).
+    asset: Mapped["Asset"] = relationship()
 
     __table_args__ = {"schema": SCHEMA}
 
@@ -181,3 +199,28 @@ class PortfolioPositionSnapshot(Base):
         Index("ib_portfolio_position_snapshots_run_id", "run_id"),
         {"schema": SCHEMA},
     )
+
+
+class PortfolioWatchlistEntry(Base):
+    """Un asset che questo portfolio osserva — lo scope su cui gira
+    `run_weekly_decisions()` per questo portfolio, non l'intero universo
+    condiviso. Popolata dal bootstrap (`decision_engine.engine.
+    initialize_portfolio`), non impegna capitale: distinta da
+    `PortfolioPosition` (quantità/prezzo di carico), che resta
+    responsabilità del Backtesting Engine, non ancora scritto.
+    """
+
+    __tablename__ = "t_portfolio_watchlist"
+
+    portfolio_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.t_portfolios.portfolio_id"), primary_key=True
+    )
+    asset_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("market_data.t_assets.asset_id"), primary_key=True
+    )
+    added_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="watchlist")
+    asset: Mapped["Asset"] = relationship()
+
+    __table_args__ = {"schema": SCHEMA}
