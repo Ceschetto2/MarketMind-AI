@@ -6,7 +6,7 @@ Tutte le funzioni accettano una sessione iniettata: usano la fixture
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,6 +14,7 @@ from marketmind_ai.db.models.market_data import Asset
 from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
 from marketmind_ai.db.portfolio_reader import (
     get_active_model_portfolios,
+    get_due_model_portfolios,
     get_portfolio,
     get_portfolio_positions,
     get_watchlist,
@@ -136,6 +137,62 @@ class TestGetActiveModelPortfolios:
         assert active_model in ids
         assert inactive_model not in ids
         assert benchmark not in ids
+
+
+class TestGetDueModelPortfolios:
+    def test_null_next_decision_at_is_due(self, db_session):
+        """Mai schedulato prima (portfolio appena creato, non ancora
+        inizializzato) — trattato come scaduto subito, non ignorato."""
+        portfolio_id = _make_portfolio(db_session, next_decision_at=None)
+
+        due = get_due_model_portfolios(db_session, datetime.now(timezone.utc))
+
+        assert portfolio_id in {p.portfolio_id for p in due}
+
+    def test_past_next_decision_at_is_due(self, db_session):
+        as_of = datetime.now(timezone.utc)
+        portfolio_id = _make_portfolio(
+            db_session, next_decision_at=as_of - timedelta(days=1)
+        )
+
+        due = get_due_model_portfolios(db_session, as_of)
+
+        assert portfolio_id in {p.portfolio_id for p in due}
+
+    def test_future_next_decision_at_is_not_due(self, db_session):
+        as_of = datetime.now(timezone.utc)
+        portfolio_id = _make_portfolio(
+            db_session, next_decision_at=as_of + timedelta(days=6)
+        )
+
+        due = get_due_model_portfolios(db_session, as_of)
+
+        assert portfolio_id not in {p.portfolio_id for p in due}
+
+    def test_excludes_inactive_and_benchmark_even_if_due(self, db_session):
+        as_of = datetime.now(timezone.utc)
+        inactive_model = _make_portfolio(
+            db_session,
+            portfolio_id=TEST_PORTFOLIO_ID_2,
+            name="paused-portfolio",
+            is_active=False,
+            next_decision_at=None,
+        )
+        benchmark = _make_portfolio(
+            db_session,
+            portfolio_id=-3,
+            name="test-benchmark",
+            portfolio_type="benchmark",
+            is_active=True,
+            llm_provider=None,
+            model_version=None,
+            next_decision_at=None,
+        )
+
+        due_ids = {p.portfolio_id for p in get_due_model_portfolios(db_session, as_of)}
+
+        assert inactive_model not in due_ids
+        assert benchmark not in due_ids
 
 
 class TestGetWatchlist:

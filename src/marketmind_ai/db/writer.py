@@ -33,7 +33,7 @@ from marketmind_ai.db.models.market_data import (
     UniverseMember,
 )
 from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
-from marketmind_ai.db.session import get_session
+from marketmind_ai.db.session import get_session, track_ingestion_run
 from marketmind_ai.schemas import (
     AssetRecord,
     CompanyEventRecord,
@@ -341,6 +341,13 @@ def ingestion_run(source: str, target_table: str) -> Iterator[IngestionRunTracke
     sessione propria anche in caso di eccezione, cosicché un fallimento
     nella transazione dati del chiamante non si porti via anche il record
     di audit del fallimento stesso.
+
+    Il corpo del blocco (`yield`) gira sotto `track_ingestion_run(run_id)`
+    (`db/session.py`): ogni `get_session()` che la pipeline apre al suo
+    interno imposta da sé `marketmind.ingestion_run_id`, così le righe che
+    scrive in `market_data` restano collegate a questo run in
+    `audit.t_audit_logs` via il trigger generico — nessun cambiamento
+    richiesto alle pipeline stesse.
     """
     with get_session() as session:
         run = IngestionRun(
@@ -355,7 +362,8 @@ def ingestion_run(source: str, target_table: str) -> Iterator[IngestionRunTracke
 
     tracker = IngestionRunTracker(run_id=run_id)
     try:
-        yield tracker
+        with track_ingestion_run(run_id):
+            yield tracker
     except Exception as exc:
         with get_session() as session:
             session.execute(

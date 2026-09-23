@@ -71,6 +71,11 @@ class ModelDecision(Base):
     context_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     run: Mapped["ModelRun"] = relationship(back_populates="decisions_made")
+    # Nessun back_populates, stesso motivo di PortfolioPosition.asset: serve
+    # solo a risalire al symbol da un asset_id senza query separata — il
+    # log decisioni della dashboard (db/dashboard_reader.py) ne ha bisogno
+    # per etichettare ogni riga.
+    asset: Mapped["Asset"] = relationship()
 
     __table_args__ = (
         CheckConstraint("decision IN ('BUY', 'SELL', 'HOLD')", name="decision"),

@@ -15,7 +15,7 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.audit import IngestionRun
+from marketmind_ai.db.models.audit import AuditLog, IngestionRun
 from marketmind_ai.db.models.market_data import (
     Asset,
     CompanyEvent,
@@ -496,4 +496,46 @@ class TestIngestionRun:
                 assert row.rows_written == 1
                 assert "errore di prova" in row.error_message
         finally:
+            self._cleanup(run_id)
+
+    def test_scrittura_dentro_il_blocco_collega_laudit_log_al_run(self):
+        """Fix di `Market Mind AI - Docs/tasks/2026-09-14-run-id-guc-linkage.md`:
+        una scrittura su una tabella audited (`AUDITED_TABLES`, 0001) fatta
+        dentro `with ingestion_run(...) as run:` deve produrre una riga in
+        `audit.t_audit_logs` con `run_id` popolato — prima del fix restava
+        sempre NULL, per ogni pipeline."""
+        asset_id = None
+        with ingestion_run("yfinance", "market_data.t_assets") as run:
+            with get_session() as session:
+                asset_id = upsert_asset(
+                    session,
+                    AssetRecord(
+                        symbol="RUNLINK",
+                        name="Test Asset",
+                        sector="Technology",
+                        asset_type="equity",
+                        source="yfinance",
+                        fetched_at=datetime.now(timezone.utc),
+                    ),
+                )
+            run.rows_written = 1
+        run_id = run.run_id
+
+        try:
+            with get_session() as session:
+                log_row = session.execute(
+                    select(AuditLog)
+                    .where(
+                        AuditLog.schema_name == "market_data",
+                        AuditLog.table_name == "t_assets",
+                        AuditLog.row_pk == f"asset_id={asset_id}",
+                    )
+                    .order_by(AuditLog.changed_at.desc())
+                ).scalars().first()
+                assert log_row is not None
+                assert log_row.run_id == run_id
+        finally:
+            with get_session() as session:
+                session.execute(delete(Asset).where(Asset.asset_id == asset_id))
+                session.execute(delete(AuditLog).where(AuditLog.run_id == run_id))
             self._cleanup(run_id)

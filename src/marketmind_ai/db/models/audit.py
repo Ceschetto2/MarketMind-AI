@@ -75,13 +75,19 @@ class IngestionRun(Base):
 
 
 class AuditLog(Base):
-    """Riga di audit scritta dal trigger `audit.fn_audit_log()` — sola lettura da ORM."""
+    """Riga di audit scritta dal trigger `audit.fn_audit_log()` — sola lettura da ORM.
+
+    `run_id` è `ON DELETE SET NULL` (migrazione `0015`): cancellare un
+    `IngestionRun` scollega il suo audit log invece di bloccare la
+    cancellazione o perdere la riga di storico — coerente con la
+    nullability già esistente della colonna.
+    """
 
     __tablename__ = "t_audit_logs"
 
     audit_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey(f"{SCHEMA}.t_ingestion_runs.run_id")
+        BigInteger, ForeignKey(f"{SCHEMA}.t_ingestion_runs.run_id", ondelete="SET NULL")
     )
     schema_name: Mapped[str] = mapped_column(String(50), nullable=False)
     table_name: Mapped[str] = mapped_column(String(100), nullable=False)

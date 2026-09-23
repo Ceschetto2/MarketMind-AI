@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
@@ -48,6 +48,26 @@ def write_watchlist(
         session.add(
             PortfolioWatchlistEntry(portfolio_id=portfolio_id, asset_id=asset_id, added_at=added_at)
         )
+    session.flush()
+
+
+def schedule_next_decision(
+    session: Session, portfolio_id: int, next_decision_at: datetime
+) -> None:
+    """Scrive quando il Decision Engine dovrà girare di nuovo per questo
+    portfolio (`t_portfolios.next_decision_at`).
+
+    Non un cron fisso lato timer: `next_decision_at` è un valore che il
+    motore stesso calcola dopo ogni giro (`decision_engine.engine`,
+    default: +7 giorni) e può quindi sovrascrivere con un valore diverso
+    dal default per un singolo portfolio, in futuro anche in risposta a un
+    rinvio dell'LLM (`Decision.defer`, non ancora collegato qui) — il
+    timer condiviso (`get_due_model_portfolios`) si limita a leggerlo."""
+    session.execute(
+        update(Portfolio)
+        .where(Portfolio.portfolio_id == portfolio_id)
+        .values(next_decision_at=next_decision_at)
+    )
     session.flush()
 
 
