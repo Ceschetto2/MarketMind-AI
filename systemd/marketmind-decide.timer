@@ -1,0 +1,24 @@
+# Trigger condiviso del Decision Engine — un solo timer per tutti i
+# portfolio 'model', non uno per portfolio (vedi il commento in testa a
+# `deploy/quadlet/marketmind-decide.container` e `Market Mind AI - Docs/
+# Decision Engine/05_timer_e_cadenza.md`). Cadenza oraria: più fitta del
+# default per-portfolio (`DEFAULT_DECISION_INTERVAL`, 7 giorni), perché è
+# solo un "controlla chi è scaduto ORA" — la cadenza vera è quella scritta
+# dal motore su `t_portfolios.next_decision_at`, non quella di questo
+# timer. Avvia `marketmind-decide.service`, lo stesso service oneshot
+# riusato da un trigger manuale (`systemctl --user start
+# marketmind-decide.service`).
+#
+# `Persistent=true`: se la macchina è spenta/sospesa al momento in cui il
+# timer dovrebbe scattare, il giro mancato viene recuperato al prossimo
+# avvio invece di essere perso — stessa scelta delle pipeline di ingestion.
+
+[Unit]
+Description=MarketMind AI — timer decision engine (oraria, per-portfolio via next_decision_at)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
