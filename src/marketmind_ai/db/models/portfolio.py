@@ -60,6 +60,10 @@ class Portfolio(Base):
     ed `equity_value` sono mutabili, scritti dallo strato applicativo a ogni
     trade/mark-to-market; il trigger su questa tabella si limita a
     fotografarli in `t_portfolio_snapshots` ad ogni cambiamento.
+    `next_decision_at` è la cadenza per-portfolio del Decision Engine —
+    NULL finché il portfolio non ha ancora girato un primo giro, poi
+    scritta dal motore stesso a ogni giro (`decision_engine.engine`), mai
+    dal timer che lo invoca.
     """
 
     __tablename__ = "t_portfolios"
@@ -77,6 +81,7 @@ class Portfolio(Base):
     llm_provider: Mapped[str | None] = mapped_column(Text)
     model_version: Mapped[str | None] = mapped_column(Text)
     strategy_prompt: Mapped[str | None] = mapped_column(Text)
+    next_decision_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
     positions: Mapped[list["PortfolioPosition"]] = relationship(
         back_populates="portfolio"
@@ -209,11 +214,13 @@ class PortfolioPositionSnapshot(Base):
 
 class PortfolioWatchlistEntry(Base):
     """Un asset che questo portfolio osserva — lo scope su cui gira
-    `run_weekly_decisions()` per questo portfolio, non l'intero universo
+    `run_due_decisions()` per questo portfolio, non l'intero universo
     condiviso. Popolata dal bootstrap (`decision_engine.engine.
     initialize_portfolio`), non impegna capitale: distinta da
-    `PortfolioPosition` (quantità/prezzo di carico), che resta
-    responsabilità del Backtesting Engine, non ancora scritto.
+    `PortfolioPosition` (quantità/prezzo di carico), che il Decision Engine
+    stesso aggiorna eseguendo i trade (`db/portfolio_writer.py`,
+    `execute_trade()`) — non il Backtesting Engine, che resta analisi
+    retrospettiva, non ancora scritto.
     """
 
     __tablename__ = "t_portfolio_watchlist"

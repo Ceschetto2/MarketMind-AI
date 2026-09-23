@@ -1,0 +1,52 @@
+# Quadlet Podman rootless per l'entry point standalone del Decision Engine
+# (`decision_engine/pipeline.py` → `run_due_decisions()`), vedi
+# `Market Mind AI - Docs/Decision Engine/05_timer_e_cadenza.md`.
+#
+# Un solo container per l'intero Decision Engine, non uno per portfolio: i
+# portfolio nascono a runtime (`initialize_portfolio()`, non un file
+# git-tracked come le otto pipeline di ingestion), quindi non possono avere
+# ciascuno la propria unit Quadlet statica. La cadenza per-portfolio vive
+# nel database (`t_portfolios.next_decision_at`), non nel timer — questo
+# container gira a cadenza oraria (`marketmind-decide.timer`) e ogni volta
+# processa solo i portfolio davvero scaduti (`get_due_model_portfolios`),
+# no-op per gli altri.
+#
+# Stessa immagine condivisa delle pipeline di ingestion
+# (`marketmind-ingestion`, `deploy/ingestion/Containerfile`): contiene
+# l'intero pacchetto `marketmind_ai`, `decision_engine/`/`llm/` incluse,
+# nessun rebuild necessario per questo container.
+#
+# `Network=marketmind.network` come le altre unit — risolve
+# `POSTGRES_HOST=marketmind-db` via il DNS integrato di Podman.
+#
+# `Secret=marketmind-app-password` è la password del ruolo Postgres
+# applicativo `marketmind_app` (scrittura `decisions`/`portfolio`, lettura
+# `market_data`, `db/03_utenti_db.md`) — mai `marketmind_ingestion`, che
+# questo container non deve poter usare. `Secret=marketmind-gemini-api-key`
+# è la chiave Gemini (`llm/gemini.py`, letta come `GEMINI_API_KEY`).
+#
+# Nessun `--trigger` da `deploy.sh` per questo container (quel flag
+# resta scoped alle sole pipeline di ingestion, `marketmind-ingest-
+# <pipeline>.service`): un run ad hoc si lancia con `systemctl --user
+# start marketmind-decide.service`.
+
+[Unit]
+Description=MarketMind AI — decision engine (giri di decisione dovuti)
+
+[Container]
+Image=localhost/marketmind-ingestion:latest
+ContainerName=marketmind-decide
+Network=marketmind.network
+Exec=python -m marketmind_ai.decision_engine.pipeline
+Secret=marketmind-app-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_app
+Secret=marketmind-gemini-api-key,type=env,target=GEMINI_API_KEY
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

@@ -42,7 +42,10 @@
 #   FINNHUB_API_KEY                 chiave API Finnhub, obbligatoria (nessun
 #   FRED_API_KEY                    fallback interattivo: sono chiavi di
 #   FMP_API_KEY                     terze parti, non password scelte da chi
-#                                    lancia il deploy) — già in .env/.env.example.
+#   GEMINI_API_KEY                  lancia il deploy) — già in .env/.env.example.
+#                                    GEMINI_API_KEY è il provider LLM del
+#                                    Decision Engine (marketmind-decide.container),
+#                                    non un'API dati come le altre tre.
 #   MARKETMIND_QUADLET_DIR           dove linkare le unit Quadlet (.container/
 #                                    .network/.volume — default
 #                                    ~/.config/containers/systemd, la
@@ -190,11 +193,14 @@ log "provisioning secret"
 store_secret marketmind-db-password MARKETMIND_DB_PASSWORD 1
 store_secret marketmind-ingestion-password MARKETMIND_INGESTION_PASSWORD 1
 store_secret marketmind-app-password MARKETMIND_APP_PASSWORD 1
-# Le tre chiavi API sono di terze parti, non password scelte da chi lancia
-# il deploy: nessun fallback interattivo, vanno già valorizzate in .env.
+# Le quattro chiavi API sono di terze parti, non password scelte da chi
+# lancia il deploy: nessun fallback interattivo, vanno già valorizzate in
+# .env. GEMINI_API_KEY è il provider LLM (marketmind-decide.container), le
+# altre tre sono le fonti dati di ingestion.
 store_secret marketmind-finnhub-api-key FINNHUB_API_KEY 0
 store_secret marketmind-fred-api-key FRED_API_KEY 0
 store_secret marketmind-fmp-api-key FMP_API_KEY 0
+store_secret marketmind-gemini-api-key GEMINI_API_KEY 0
 
 log "systemctl --user daemon-reload"
 systemctl --user daemon-reload

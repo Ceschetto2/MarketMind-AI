@@ -10,14 +10,16 @@ sempre per un solo portfolio: nessuna funzione qui legge mai lo stato di
 più di un portfolio alla volta.
 
 Un portfolio 'model' va inizializzato (`initialize_portfolio()`) prima che
-`run_weekly_decisions()` produca decisioni per lui: sceglie lo scope di
+`run_due_decisions()` produca decisioni per lui: sceglie lo scope di
 asset da osservare, non ancora un entry point invocato da qui — pensata
 per essere richiamata da un front-end futuro alla creazione/attivazione di
-un portfolio.
+un portfolio. `run_due_decisions()` gira solo sui portfolio il cui giro è
+davvero dovuto ORA (`t_portfolios.next_decision_at`), invocata a cadenza
+più fitta dall'entry point standalone di `decision_engine/pipeline.py`.
 """
 
 from marketmind_ai.decision_engine.context_builder import build_bootstrap_context, build_context
-from marketmind_ai.decision_engine.engine import initialize_portfolio, run_weekly_decisions
+from marketmind_ai.decision_engine.engine import initialize_portfolio, run_due_decisions
 from marketmind_ai.decision_engine.schemas import BootstrapContext, DecisionContext
 
 __all__ = [
@@ -26,5 +28,5 @@ __all__ = [
     "build_bootstrap_context",
     "build_context",
     "initialize_portfolio",
-    "run_weekly_decisions",
+    "run_due_decisions",
 ]

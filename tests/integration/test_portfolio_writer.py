@@ -23,7 +23,7 @@ from marketmind_ai.db.models.portfolio import (
     PortfolioSnapshot,
     PortfolioWatchlistEntry,
 )
-from marketmind_ai.db.portfolio_writer import execute_trade, write_watchlist
+from marketmind_ai.db.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
 from marketmind_ai.db.session import get_session, track_model_run
 from marketmind_ai.llm.schemas import Decision
 
@@ -236,6 +236,27 @@ class TestWriteWatchlist:
             )
         ).scalars().all()
         assert rows == []
+
+
+class TestScheduleNextDecision:
+    def test_sets_next_decision_at(self, db_session):
+        portfolio_id = _make_portfolio(db_session)
+        next_run = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+
+        schedule_next_decision(db_session, portfolio_id, next_run)
+
+        assert _get_portfolio(db_session, portfolio_id).next_decision_at == next_run
+
+    def test_overwrites_a_previously_scheduled_value(self, db_session):
+        portfolio_id = _make_portfolio(db_session)
+        schedule_next_decision(
+            db_session, portfolio_id, datetime(2026, 9, 20, 0, 0, tzinfo=timezone.utc)
+        )
+        next_run = datetime(2026, 9, 27, 0, 0, tzinfo=timezone.utc)
+
+        schedule_next_decision(db_session, portfolio_id, next_run)
+
+        assert _get_portfolio(db_session, portfolio_id).next_decision_at == next_run
 
 
 class TestPortfolioDeleteTrigger:
