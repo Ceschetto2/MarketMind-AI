@@ -186,6 +186,12 @@ class PortfolioPositionSnapshot(Base):
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    # Nessun back_populates, stesso motivo di PortfolioPosition.asset: serve
+    # solo a risalire al symbol da un asset_id senza query separata — il
+    # Backtesting Engine (db/backtest_reader.py) ne ha bisogno per etichettare
+    # le colonne del frame di prezzo passato a vectorbt.
+    asset: Mapped["Asset"] = relationship()
+
     __table_args__ = (
         CheckConstraint(
             "operation IN ('INSERT', 'UPDATE', 'DELETE')", name="operation"

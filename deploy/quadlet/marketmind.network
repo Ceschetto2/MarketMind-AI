@@ -1,5 +1,4 @@
-# Rete Podman condivisa da tutti i container di MarketMind-AI — oggi solo
-# marketmind-db, in futuro anche i container delle pipeline di ingestion.
+# Rete Podman condivisa da tutti i container di MarketMind-AI.
 # Ogni container che dichiara `Network=marketmind.network` nel proprio
 # `.container` si risolve reciprocamente per `ContainerName` via il DNS
 # integrato di Podman (aardvark-dns, automatico su reti non default) —

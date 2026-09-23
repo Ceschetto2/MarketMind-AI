@@ -189,6 +189,27 @@ class TestRunWeeklyDecisions:
         _, kwargs = mock_create_run.call_args
         assert kwargs["ts"].tzinfo is not None
 
+    def test_wraps_the_decision_loop_in_the_run_context(self, mocker):
+        """`track_model_run` collega gli snapshot di portfolio prodotti dai
+        trade di questo run (Market Mind AI - Docs/Backtest/
+        00_motore_backtest.md) — deve avvolgere l'intero giro decisionale,
+        non solo la singola execute_trade."""
+        watchlist = [_mock_asset(mocker, 1, "AAPL")]
+        portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
+        provider = mocker.Mock()
+        provider.decide.return_value = Decision(decision="HOLD")
+        mock_create_run, _, _, _, _ = _patch_common(
+            mocker, portfolios, watchlist, providers=[provider]
+        )
+        mock_create_run.return_value = 77
+        mock_track_model_run = mocker.patch(
+            "marketmind_ai.decision_engine.engine.track_model_run"
+        )
+
+        run_weekly_decisions(as_of=AS_OF)
+
+        mock_track_model_run.assert_called_once_with(77)
+
     def test_context_is_built_with_this_portfolios_id(self, mocker):
         """Isolamento: il context di ogni asset è costruito con il
         portfolio_id del portfolio corrente, mai di un altro."""

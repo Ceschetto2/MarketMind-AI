@@ -43,7 +43,7 @@ from marketmind_ai.db.portfolio_reader import (
     get_watchlist,
 )
 from marketmind_ai.db.portfolio_writer import execute_trade, write_watchlist
-from marketmind_ai.db.session import get_session
+from marketmind_ai.db.session import get_session, track_model_run
 from marketmind_ai.decision_engine.context_builder import (
     DEFAULT_COMPANY_EVENT_DAYS_BACK,
     DEFAULT_NEWS_DAYS_BACK,
@@ -150,47 +150,53 @@ def _run_for_portfolio(
     run_id = _create_run(portfolio, as_of)
 
     decisions_written = 0
-    for asset in watchlist:
-        with get_session() as session:
-            context = build_context(
-                session, asset.asset_id, asset.symbol, portfolio_id=portfolio.portfolio_id, as_of=as_of
-            )
+    # track_model_run: ogni get_session() aperta qui dentro imposta da sé
+    # marketmind.model_run_id, così i trigger di snapshot del portfolio
+    # (db/session.py) collegano cash/posizione a questo run — necessario
+    # per il Backtesting Engine, che isola i trade di un run tramite quel
+    # collegamento (Market Mind AI - Docs/Backtest/00_motore_backtest.md).
+    with track_model_run(run_id):
+        for asset in watchlist:
+            with get_session() as session:
+                context = build_context(
+                    session, asset.asset_id, asset.symbol, portfolio_id=portfolio.portfolio_id, as_of=as_of
+                )
 
-        try:
-            decision = provider.decide(context.model_dump(mode="json"))
-        except DecisionError:
-            logger.warning(
-                "decisione fallita per %s (portfolio %s), salto",
-                asset.symbol,
-                portfolio.portfolio_id,
-            )
-            continue
+            try:
+                decision = provider.decide(context.model_dump(mode="json"))
+            except DecisionError:
+                logger.warning(
+                    "decisione fallita per %s (portfolio %s), salto",
+                    asset.symbol,
+                    portfolio.portfolio_id,
+                )
+                continue
 
-        with get_session() as session:
-            write_model_decision(
-                session,
-                run_id=run_id,
-                asset_id=asset.asset_id,
-                ts=as_of,
-                decision=decision,
-                context_snapshot=context.model_dump(mode="json"),
-            )
-            if decision.decision in ("BUY", "SELL"):
-                if context.prices:
-                    execute_trade(
-                        session,
-                        portfolio.portfolio_id,
-                        asset.asset_id,
-                        decision,
-                        price=context.prices[-1].close,
-                    )
-                else:
-                    logger.warning(
-                        "nessun prezzo disponibile per %s (portfolio %s), trade non eseguito",
-                        asset.symbol,
-                        portfolio.portfolio_id,
-                    )
-        decisions_written += 1
+            with get_session() as session:
+                write_model_decision(
+                    session,
+                    run_id=run_id,
+                    asset_id=asset.asset_id,
+                    ts=as_of,
+                    decision=decision,
+                    context_snapshot=context.model_dump(mode="json"),
+                )
+                if decision.decision in ("BUY", "SELL"):
+                    if context.prices:
+                        execute_trade(
+                            session,
+                            portfolio.portfolio_id,
+                            asset.asset_id,
+                            decision,
+                            price=context.prices[-1].close,
+                        )
+                    else:
+                        logger.warning(
+                            "nessun prezzo disponibile per %s (portfolio %s), trade non eseguito",
+                            asset.symbol,
+                            portfolio.portfolio_id,
+                        )
+            decisions_written += 1
 
     logger.info(
         "run %d (portfolio %d) completato: %d/%d decisioni scritte",
