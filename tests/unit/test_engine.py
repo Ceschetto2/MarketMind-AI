@@ -212,7 +212,7 @@ class TestRunDueDecisions:
         portfolios = [_mock_portfolio(mocker, portfolio_id=10)]
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="HOLD")
-        mock_create_run, _, _, _, _ = _patch_common(
+        mock_create_run, _, _, _, _, _ = _patch_common(
             mocker, portfolios, watchlist, providers=[provider]
         )
         mock_create_run.return_value = 77
@@ -220,7 +220,7 @@ class TestRunDueDecisions:
             "marketmind_ai.decision_engine.engine.track_model_run"
         )
 
-        run_weekly_decisions(as_of=AS_OF)
+        run_due_decisions(as_of=AS_OF)
 
         mock_track_model_run.assert_called_once_with(77)
 
