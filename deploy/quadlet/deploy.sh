@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Deploy/refresh delle unit Podman Quadlet di MarketMind-AI — oggi
-# marketmind-db (Postgres+TimescaleDB) più i due ruoli applicativi che ci
-# vivono sopra; le future unit delle pipeline di ingestion si aggiungono
-# allo stesso schema quando arrivano (raccolte automaticamente, vedi
-# `UNITS` sotto — non serve editare questo file per una nuova pipeline).
+# Deploy/refresh delle unit Podman Quadlet di MarketMind-AI: marketmind-db
+# (Postgres+TimescaleDB) con i due ruoli applicativi, le migrazioni dello
+# schema (marketmind-migrate), le otto pipeline di ingestion e il Decision
+# Engine, ciascuno sulla propria immagine (deploy/images/). Le unit sono
+# raccolte automaticamente da deploy/quadlet/<pacchetto>/ e
+# deploy/systemd/<pacchetto>/ — non serve editare questo file per una nuova
+# pipeline.
 #
 # Idempotente: rilanciarlo aggiorna i symlink, ricrea sempre i secret dal
 # valore corrente delle variabili d'ambiente (mai "esiste già, non tocco":
@@ -18,8 +20,10 @@
 # errore.
 #
 # Uso:
-#   deploy/quadlet/deploy.sh                     # symlink + secret + ruoli + enable --now (idempotente)
+#   deploy/quadlet/deploy.sh                     # symlink + secret + DB + ruoli + migrazioni + timer (idempotente)
+#   deploy/quadlet/deploy.sh --build             # come sopra, ricostruendo prima le quattro immagini
 #   deploy/quadlet/deploy.sh --restart           # come sopra ma forza un restart di marketmind-db
+#                                                   (--build e --restart si possono combinare)
 #   deploy/quadlet/deploy.sh --trigger <pipeline>  # avvia subito marketmind-ingest-<pipeline>.service
 #                                                   # (run manuale ad hoc, non aspetta il timer);
 #                                                   # non esegue il resto del deploy, vedi nota sotto
@@ -78,11 +82,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 QUADLET_SRC="$REPO_ROOT/deploy/quadlet"
 QUADLET_DST="${MARKETMIND_QUADLET_DIR:-$HOME/.config/containers/systemd}"
-SYSTEMD_SRC="$REPO_ROOT/systemd"
+SYSTEMD_SRC="$REPO_ROOT/deploy/systemd"
 SYSTEMD_USER_DST="${MARKETMIND_SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
+IMAGES_SRC="$REPO_ROOT/deploy/images"
 DB_CONTAINER_NAME="marketmind-db"
 SERVICE_NAME="marketmind-db.service"
-ROLES_SQL_TEMPLATE="$QUADLET_SRC/init-roles.sql.tmpl"
+MIGRATE_SERVICE="marketmind-migrate.service"
+ROLES_SQL_TEMPLATE="$QUADLET_SRC/marketmind_db/init-roles.sql.tmpl"
+
+# immagine -> dockerfile (deploy/images/), costruite da `--build`.
+IMAGES=(
+    "marketmind-migrate:marketmind_db.dockerfile"
+    "marketmind-pipelines:marketmind_pipelines.dockerfile"
+    "marketmind-llm-decision-engine:marketmind_llm_decision_engine.dockerfile"
+    "marketmind-frontend:marketmind_frontend.dockerfile"
+)
 
 log() { printf '[deploy] %s\n' "$*" >&2; }
 fail() { log "ERRORE: $*"; exit 1; }
@@ -99,64 +113,107 @@ if [ "${1:-}" = "--trigger" ]; then
     exit 0
 fi
 
+BUILD=0
+RESTART=0
+for arg in "$@"; do
+    case "$arg" in
+        --build) BUILD=1 ;;
+        --restart) RESTART=1 ;;
+        *) fail "argomento sconosciuto: $arg (ammessi: --build, --restart, --trigger <pipeline>)" ;;
+    esac
+done
+
 command -v podman >/dev/null 2>&1 || fail "podman non trovato in PATH"
 command -v systemctl >/dev/null 2>&1 || fail "systemctl non trovato in PATH"
 
-# --- Unit Quadlet (.container/.network/.volume): glob dinamico, non lista
-# fissa --- Raccoglie automaticamente ogni unit presente in deploy/quadlet
-# — comprese le future unit per pipeline di ingestion (es.
-# marketmind-ingest-yfinance-prices.container) senza dover editare questo
-# script a ogni nuova pipeline. I `.timer` NON sono qui: il generatore
-# Quadlet capisce solo .container/.network/.volume/.kube/.pod, un .timer in
-# questa directory non verrebbe mai processato (vedi `systemd/` sotto).
-QUADLET_UNITS=()
-shopt -s nullglob
-for pattern in '*.container' '*.network' '*.volume'; do
-    for f in "$QUADLET_SRC"/$pattern; do
-        QUADLET_UNITS+=("$(basename "$f")")
+# --- Immagini: solo con --build, dalla root del repo (contesto filtrato da
+# .dockerignore: niente .env, .venv, .claude) ---
+if [ "$BUILD" = "1" ]; then
+    for entry in "${IMAGES[@]}"; do
+        image="${entry%%:*}"
+        dockerfile="${entry##*:}"
+        log "build $image:latest ($dockerfile)"
+        podman build -q -t "$image:latest" -f "$IMAGES_SRC/$dockerfile" "$REPO_ROOT" >/dev/null \
+            || fail "build di $image fallita"
     done
-done
+fi
+
+# link_units <dst_dir> <file>...: symlink di ogni file in dst_dir, poi
+# rimozione dei symlink `marketmind*` in dst_dir che non corrispondono più a
+# nessuna unit del repo (unit rinominate/spostate, `.timer` finiti per errore
+# nella directory Quadlet, link verso worktree o percorsi che non esistono
+# più). Solo symlink col prefisso marketmind: file veri e unit di altri
+# progetti nella stessa directory non vengono mai toccati.
+link_units() {
+    local dst_dir="$1"; shift
+    local -A wanted=()
+    mkdir -p "$dst_dir"
+    local src unit dst
+    for src in "$@"; do
+        unit="$(basename "$src")"
+        wanted["$unit"]=1
+        dst="$dst_dir/$unit"
+        if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
+            log "  $unit già collegata"
+        else
+            ln -sfn "$src" "$dst"
+            log "  $unit collegata"
+        fi
+    done
+    shopt -s nullglob
+    for dst in "$dst_dir"/marketmind*; do
+        unit="$(basename "$dst")"
+        if [ -L "$dst" ] && [ -z "${wanted[$unit]:-}" ]; then
+            local target
+            target="$(readlink "$dst")"
+            rm "$dst"
+            log "  $unit rimossa (non più nel repo, puntava a $target)"
+        fi
+    done
+    shopt -u nullglob
+}
+
+# --- Unit Quadlet (.container/.network/.volume): glob dinamico su
+# deploy/quadlet/ (la rete) e deploy/quadlet/<pacchetto>/ (container e
+# volumi), non una lista fissa. I `.timer` NON sono qui: il generatore
+# Quadlet capisce solo .container/.network/.volume/.kube/.pod, un .timer in
+# questa directory non verrebbe mai processato (vedi deploy/systemd/ sotto).
+shopt -s nullglob
+QUADLET_FILES=("$QUADLET_SRC"/*.network "$QUADLET_SRC"/*/*.container "$QUADLET_SRC"/*/*.network "$QUADLET_SRC"/*/*.volume)
 shopt -u nullglob
-[ "${#QUADLET_UNITS[@]}" -gt 0 ] || fail "nessuna unit Quadlet trovata in $QUADLET_SRC"
+[ "${#QUADLET_FILES[@]}" -gt 0 ] || fail "nessuna unit Quadlet trovata in $QUADLET_SRC"
 
 log "linking unit Quadlet: $QUADLET_SRC -> $QUADLET_DST"
-mkdir -p "$QUADLET_DST"
-for unit in "${QUADLET_UNITS[@]}"; do
-    src="$QUADLET_SRC/$unit"
-    dst="$QUADLET_DST/$unit"
-    if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
-        log "  $unit già collegata"
-    else
-        ln -sf "$src" "$dst"
-        log "  $unit collegata"
-    fi
-done
+link_units "$QUADLET_DST" "${QUADLET_FILES[@]}"
 
-# --- Unit .timer: directory separata, systemd/ non deploy/quadlet/ ---
+# --- Unit .timer: directory separata, deploy/systemd/ non deploy/quadlet/ ---
 # systemd --user carica le unit non-Quadlet direttamente da
 # ~/.config/systemd/user — un .timer va linkato lì, non nella directory che
 # il generatore Quadlet scansiona (dove semplicemente verrebbe ignorato).
 # A differenza delle unit Quadlet (abilitate implicitamente dal generatore
 # al daemon-reload), un .timer va abilitato esplicitamente: `enable --now`.
-TIMER_UNITS=()
 shopt -s nullglob
-for f in "$SYSTEMD_SRC"/*.timer; do
+TIMER_FILES=("$SYSTEMD_SRC"/*/*.timer)
+shopt -u nullglob
+TIMER_UNITS=()
+for f in "${TIMER_FILES[@]}"; do
     TIMER_UNITS+=("$(basename "$f")")
+done
+
+# I timer non più nel repo vanno disabilitati prima che il loro symlink
+# sparisca, altrimenti resterebbero schedulati fino al prossimo reboot.
+shopt -s nullglob
+for dst in "$SYSTEMD_USER_DST"/marketmind*.timer; do
+    unit="$(basename "$dst")"
+    if [ -L "$dst" ] && [[ ! " ${TIMER_UNITS[*]} " == *" $unit "* ]]; then
+        log "disable --now $unit (non più nel repo)"
+        systemctl --user disable --now "$unit" 2>/dev/null || true
+    fi
 done
 shopt -u nullglob
 
 log "linking unit .timer: $SYSTEMD_SRC -> $SYSTEMD_USER_DST"
-mkdir -p "$SYSTEMD_USER_DST"
-for unit in "${TIMER_UNITS[@]}"; do
-    src="$SYSTEMD_SRC/$unit"
-    dst="$SYSTEMD_USER_DST/$unit"
-    if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
-        log "  $unit già collegata"
-    else
-        ln -sf "$src" "$dst"
-        log "  $unit collegata"
-    fi
-done
+link_units "$SYSTEMD_USER_DST" "${TIMER_FILES[@]}"
 
 # --- Secret: sempre ricreati dal valore corrente dell'ambiente ---
 # store_secret <secret_name> <env_var_name> <allow_interactive:0|1>
@@ -205,12 +262,7 @@ store_secret marketmind-gemini-api-key GEMINI_API_KEY 0
 log "systemctl --user daemon-reload"
 systemctl --user daemon-reload
 
-for unit in "${TIMER_UNITS[@]}"; do
-    log "enable --now $unit"
-    systemctl --user enable --now "$unit"
-done
-
-if [ "${1:-}" = "--restart" ]; then
+if [ "$RESTART" = "1" ]; then
     log "restart $SERVICE_NAME"
     systemctl --user restart "$SERVICE_NAME"
 else
@@ -265,5 +317,20 @@ rendered_sql="${rendered_sql//%%MARKETMIND_APP_PASSWORD%%/$MARKETMIND_APP_PASSWO
 printf '%s\n' "$rendered_sql" | podman exec -i "$DB_CONTAINER_NAME" psql -U marketmind -d marketmind \
     || fail "init-roles.sql.tmpl fallito — vedi output psql sopra"
 log "ruoli applicativi allineati"
+
+# --- Migrazioni: prima di (ri)abilitare qualunque timer ---
+# One-shot con RemainAfterExit: `restart` la riesegue anche se già "active"
+# da un deploy precedente, così una nuova migrazione è applicata prima che
+# riparta qualunque pipeline o il Decision Engine. `start` di una oneshot
+# attende la fine del container ed esce non zero se le migrazioni falliscono.
+log "migrazioni: restart $MIGRATE_SERVICE"
+systemctl --user restart "$MIGRATE_SERVICE" \
+    || fail "migrazioni fallite — controlla con: journalctl --user -u $MIGRATE_SERVICE"
+log "schema aggiornato"
+
+for unit in "${TIMER_UNITS[@]}"; do
+    log "enable --now $unit"
+    systemctl --user enable --now "$unit"
+done
 
 exit 0

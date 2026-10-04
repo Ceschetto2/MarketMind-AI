@@ -1,6 +1,6 @@
 # Quadlet Podman rootless per la pipeline di ingestion `fmp` (fondamentali —
 # bilanci, dividendi, split — → `market_data.t_company_events`), sulla
-# stessa immagine condivisa `marketmind-ingestion`.
+# stessa immagine delle pipeline `marketmind-pipelines`.
 #
 # **Nessun `.timer` proprio, deliberatamente**: incatenata a
 # `marketmind-ingest-finnhub-earnings.service` via `OnSuccess=` (vedi quel
@@ -17,12 +17,15 @@
 
 [Unit]
 Description=MarketMind AI — ingestion fmp (fondamentali)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-pipelines:latest
 ContainerName=marketmind-ingest-fmp
 Network=marketmind.network
-Exec=python -m marketmind_ai.ingestion.fmp_pipeline
+Exec=run fmp
 Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
 Secret=marketmind-fmp-api-key,type=env,target=FMP_API_KEY
 Environment=POSTGRES_HOST=marketmind-db

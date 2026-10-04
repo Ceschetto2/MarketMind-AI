@@ -1,4 +1,9 @@
-Quadlet Podman rootless per l'ambiente di sviluppo locale.
+Quadlet Podman rootless per l'ambiente di sviluppo locale, una
+sottodirectory per pacchetto: `marketmind_db/` (database, volume, ruoli,
+migrazioni), `marketmind_pipelines/` (le otto pipeline),
+`marketmind_llm_decision_engine/` (il Decision Engine). La rete condivisa
+`marketmind.network` resta qui; i `.timer` sono in `deploy/systemd/<pacchetto>/`,
+le immagini in `deploy/images/`.
 
 `marketmind-db.container` avvia Postgres+TimescaleDB (immagine
 `timescale/timescaledb:latest-pg16`) su `127.0.0.1:5432`, con i dati su un
@@ -15,10 +20,10 @@ non un limite di design) e la verifica end-to-end in
 `Market Mind AI - Docs/Architettura/05_networking.md` e
 `Market Mind AI - Docs/tasks/2026-08-30-networking-podman.md`.
 
-Setup — `deploy.sh` automatizza symlink, secret e avvio del servizio,
-rieseguibile senza effetti collaterali:
+Setup — `deploy.sh` automatizza immagini, symlink, secret, avvio del DB,
+ruoli, migrazioni e timer, rieseguibile senza effetti collaterali:
 
-    MARKETMIND_DB_PASSWORD=xxx deploy/quadlet/deploy.sh
+    MARKETMIND_DB_PASSWORD=xxx deploy/quadlet/deploy.sh --build
 
 Senza `MARKETMIND_DB_PASSWORD` in ambiente, se il secret non esiste ancora
 lo script te lo chiede a mano (solo in un terminale interattivo); in CI o
@@ -26,9 +31,13 @@ in uno script non interattivo la variabile è obbligatoria. `deploy.sh
 --restart` forza un riavvio del servizio anche se già attivo. Vedi i
 commenti in testa allo script per le altre variabili d'ambiente supportate.
 
-Poi, con `.env` valorizzato in root del progetto:
-
-    uv run alembic upgrade head
+Le migrazioni non si lanciano più dall'host: `marketmind-migrate.container`
+(immagine `marketmind-migrate`) esegue `alembic upgrade head` come one-shot
+dopo l'avvio del DB, e `deploy.sh` la riesegue a ogni deploy prima di
+abilitare i timer. Pipeline e Decision Engine la dichiarano in
+`Wants=`/`After=`, quindi partono sempre su uno schema aggiornato. Per uno
+sviluppo locale senza container resta possibile `uv run alembic upgrade head`
+con `.env` valorizzato.
 
 Questo target Quadlet è solo per sviluppo su localhost. `deploy.sh` è
 scritto per restare riusabile anche da un futuro workflow GitHub Actions
@@ -40,15 +49,15 @@ quando esisterà un target di produzione (server NixOS con
 
 Le otto pipeline di ingestion (`yfinance-prices`, `yfinance-assets`,
 `gdelt-ngrams`, `finnhub-news`, `finnhub-earnings`, `fred`, `fmp`,
-`universe-csv`) condividono un'unica immagine Podman,
-`marketmind-ingestion`, costruita da `deploy/ingestion/Containerfile`
-(pacchetto `marketmind_ai` installato via `uv sync --frozen` da `uv.lock`,
-niente `pip install` a mano) — coerente con
-`Market Mind AI - Docs/pipelines/00_container_e_immagini.md`. L'isolamento
-tra pipeline è a livello di container Quadlet, uno per pipeline (stesso
-`Image=`, `Exec=` diverso), non di immagine:
-
-    podman build -t marketmind-ingestion:latest -f deploy/ingestion/Containerfile .
+`universe-csv`) condividono l'immagine `marketmind-pipelines`
+(`deploy/images/marketmind_pipelines.dockerfile`: solo il pacchetto
+`marketmind_pipelines` e le sue dipendenze, installati come wheel da
+`uv.lock` con `uv sync --frozen --package`). Ogni pacchetto ha la propria
+immagine — `marketmind-migrate`, `marketmind-pipelines`,
+`marketmind-llm-decision-engine`, `marketmind-frontend` (quest'ultima senza
+ancora una unit Quadlet) —, costruite tutte da `deploy.sh --build`.
+L'isolamento tra pipeline è a livello di container Quadlet, uno per
+pipeline (stesso `Image=`, `Exec=` diverso).
 
 Ogni `marketmind-ingest-<pipeline>.container` gira su
 `Network=marketmind.network` per raggiungere il database come
@@ -56,8 +65,8 @@ Ogni `marketmind-ingest-<pipeline>.container` gira su
 `127.0.0.1`/la porta pubblicata sull'host, che sono per due container
 distinti sulla stessa rete, non lo stesso host network. A differenza di
 `marketmind-db.container`, è `Type=oneshot` in `[Service]`: si avvia,
-esegue il proprio `Exec=python -m marketmind_ai.ingestion.<pipeline>_pipeline`
-una volta ed esce — nessun loop/scheduler interno al container. La password
+esegue il proprio `Exec=run <pipeline>` (argomenti dell'entry point
+`python -m marketmind_pipelines` dell'immagine) una volta ed esce — nessun loop/scheduler interno al container. La password
 del ruolo Postgres applicativo dedicato all'ingestion, `marketmind_ingestion`,
 arriva da `podman secret marketmind-ingestion-password`; le altre variabili
 di connessione (`POSTGRES_HOST=marketmind-db`, `POSTGRES_PORT`,
@@ -68,8 +77,8 @@ di connessione (`POSTGRES_HOST=marketmind-db`, `POSTGRES_PORT`,
 
 **Il battito viene da un `.timer`, non da `deploy/quadlet/`**: le unit
 `.timer` (`marketmind-ingest-<pipeline>.timer`, una per pipeline tranne
-`fmp`, che non ne ha uno proprio — vedi sotto) vivono in `systemd/` a
-livello di root del repo, non qui — il generatore Quadlet che scansiona
+`fmp`, che non ne ha uno proprio — vedi sotto) vivono in
+`deploy/systemd/<pacchetto>/`, non qui — il generatore Quadlet che scansiona
 questa directory capisce solo `.container`/`.network`/`.volume`, un
 `.timer` piazzato qui non verrebbe mai processato. `deploy.sh` li linka
 in `~/.config/systemd/user/` (non `~/.config/containers/systemd/`) e li

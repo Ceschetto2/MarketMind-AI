@@ -1,6 +1,6 @@
 # Quadlet Podman rootless per la pipeline di ingestion `finnhub-earnings`
 # (calendario earnings → `market_data.t_company_events`), sulla stessa
-# immagine condivisa `marketmind-ingestion`.
+# immagine delle pipeline `marketmind-pipelines`.
 #
 # `OnSuccess=marketmind-ingest-fmp.service`: al completamento con successo
 # di questo service, systemd avvia `fmp` — che non ha un proprio `.timer`
@@ -13,13 +13,16 @@
 
 [Unit]
 Description=MarketMind AI — ingestion finnhub-earnings (calendario earnings)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 OnSuccess=marketmind-ingest-fmp.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-pipelines:latest
 ContainerName=marketmind-ingest-finnhub-earnings
 Network=marketmind.network
-Exec=python -m marketmind_ai.ingestion.finnhub_earnings_pipeline
+Exec=run finnhub-earnings
 Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
 Secret=marketmind-finnhub-api-key,type=env,target=FINNHUB_API_KEY
 Environment=POSTGRES_HOST=marketmind-db

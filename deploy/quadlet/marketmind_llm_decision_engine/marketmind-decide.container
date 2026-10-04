@@ -11,10 +11,10 @@
 # processa solo i portfolio davvero scaduti (`get_due_model_portfolios`),
 # no-op per gli altri.
 #
-# Stessa immagine condivisa delle pipeline di ingestion
-# (`marketmind-ingestion`, `deploy/ingestion/Containerfile`): contiene
-# l'intero pacchetto `marketmind_ai`, `decision_engine/`/`llm/` incluse,
-# nessun rebuild necessario per questo container.
+# Immagine propria del Decision Engine (`marketmind-llm-decision-engine`,
+# `deploy/images/marketmind_llm_decision_engine.dockerfile`, build:
+# `deploy.sh --build`), separata da quella delle pipeline di ingestion:
+# `Exec=` è il modulo da eseguire con `python -m` (l'ENTRYPOINT dell'immagine).
 #
 # `Network=marketmind.network` come le altre unit — risolve
 # `POSTGRES_HOST=marketmind-db` via il DNS integrato di Podman.
@@ -32,12 +32,15 @@
 
 [Unit]
 Description=MarketMind AI — decision engine (giri di decisione dovuti)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-llm-decision-engine:latest
 ContainerName=marketmind-decide
 Network=marketmind.network
-Exec=python -m marketmind_ai.decision_engine.pipeline
+Exec=marketmind_llm_decision_engine.decision_engine.pipeline
 Secret=marketmind-app-password,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_HOST=marketmind-db
 Environment=POSTGRES_PORT=5432

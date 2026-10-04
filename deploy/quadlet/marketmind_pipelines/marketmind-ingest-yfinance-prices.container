@@ -3,9 +3,8 @@
 # pipeline previste in `Market Mind AI - Docs/pipelines/00_container_e_immagini.md`.
 #
 # Stesso pattern one-shot di `marketmind-db.container`, ma sull'immagine
-# condivisa `marketmind-ingestion` (`deploy/ingestion/Containerfile`,
-# build: `podman build -t marketmind-ingestion:latest -f
-# deploy/ingestion/Containerfile .`): un container per pipeline, `Exec=`
+# delle pipeline `marketmind-pipelines` (`deploy/images/marketmind_pipelines.dockerfile`,
+# build: `deploy.sh --build`): un container per pipeline, `Exec=`
 # diverso per ciascuna, nessun timer interno al container — il battito
 # viene dall'esterno, da `marketmind-ingest-yfinance-prices.timer` (trigger
 # primario) o da `deploy.sh --trigger yfinance-prices` (trigger manuale),
@@ -27,12 +26,15 @@
 
 [Unit]
 Description=MarketMind AI — ingestion yfinance-prices (prezzi orari intraday)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-pipelines:latest
 ContainerName=marketmind-ingest-yfinance-prices
 Network=marketmind.network
-Exec=python -m marketmind_ai.ingestion.yfinance_prices_pipeline
+Exec=run yfinance-prices
 Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_HOST=marketmind-db
 Environment=POSTGRES_PORT=5432

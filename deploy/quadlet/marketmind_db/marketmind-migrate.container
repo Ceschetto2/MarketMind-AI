@@ -1,0 +1,36 @@
+# Quadlet Podman rootless per le migrazioni Alembic dello schema
+# (`alembic upgrade head`, immagine `marketmind-migrate`,
+# `deploy/images/marketmind_db.dockerfile`): lo schema non si aggiorna più
+# dall'host con `uv run alembic upgrade head`.
+#
+# One-shot con `RemainAfterExit=yes`: gira una volta, dopo che
+# `marketmind-db` è attivo, e resta "active" — le unit di pipeline e
+# Decision Engine la dichiarano in `Wants=`/`After=`, quindi partono sempre
+# su uno schema aggiornato senza rieseguire le migrazioni a ogni run.
+# `deploy.sh` la riavvia esplicitamente a ogni deploy, così una nuova
+# migrazione viene applicata prima che riparta qualunque timer.
+#
+# Gira come `marketmind` (owner del DB, password in `marketmind-db-password`),
+# non come uno dei due ruoli applicativi: le migrazioni fanno DDL.
+
+[Unit]
+Description=MarketMind AI — migrazioni dello schema (alembic upgrade head)
+Requires=marketmind-db.service
+After=marketmind-db.service
+
+[Container]
+Image=localhost/marketmind-migrate:latest
+ContainerName=marketmind-migrate
+Network=marketmind.network
+Secret=marketmind-db-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

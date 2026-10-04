@@ -1,6 +1,6 @@
 # Quadlet Podman rootless per la pipeline di ingestion `gdelt-ngrams` (news
 # via Web NGrams + entity linking → `market_data.t_news_events`), sulla
-# stessa immagine condivisa `marketmind-ingestion`.
+# stessa immagine delle pipeline `marketmind-pipelines`.
 #
 # Nessuna API key: i file `.ngrams.txt.gz`/`.toc.json.gz` sono statici su
 # GCS, scaricabili senza registrazione né rate limit applicativo — a
@@ -9,12 +9,15 @@
 
 [Unit]
 Description=MarketMind AI — ingestion gdelt-ngrams (news + entity linking)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-pipelines:latest
 ContainerName=marketmind-ingest-gdelt-ngrams
 Network=marketmind.network
-Exec=python -m marketmind_ai.ingestion.gdelt_ngrams_pipeline
+Exec=run gdelt-ngrams
 Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_HOST=marketmind-db
 Environment=POSTGRES_PORT=5432

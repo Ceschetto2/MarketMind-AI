@@ -1,18 +1,21 @@
 # Quadlet Podman rootless per la pipeline di ingestion `fred` (osservazioni
 # macro vintage via ALFRED → `market_data.t_macro_events`), sulla stessa
-# immagine condivisa `marketmind-ingestion`.
+# immagine delle pipeline `marketmind-pipelines`.
 #
 # `Secret=marketmind-fred-api-key` è la chiave API FRED (creata da deploy.sh
 # da FRED_API_KEY in .env).
 
 [Unit]
 Description=MarketMind AI — ingestion fred (osservazioni macro)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
 
 [Container]
-Image=localhost/marketmind-ingestion:latest
+Image=localhost/marketmind-pipelines:latest
 ContainerName=marketmind-ingest-fred
 Network=marketmind.network
-Exec=python -m marketmind_ai.ingestion.fred_pipeline
+Exec=run fred
 Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
 Secret=marketmind-fred-api-key,type=env,target=FRED_API_KEY
 Environment=POSTGRES_HOST=marketmind-db
