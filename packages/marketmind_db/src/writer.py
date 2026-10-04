@@ -6,24 +6,21 @@ disegno): la risoluzione `symbol` → `asset_id` e l'upsert idempotente verso
 Postgres, così gli script di ingestion restano disaccoppiati dagli id
 interni e parlano solo le interfacce Pydantic di `schemas/`.
 
-`ingestion_run()` traccia ogni esecuzione in `audit.t_ingestion_runs` in una
-transazione **separata** da quella che scrive i dati veri e propri: se la
-scrittura dati fallisce a metà, l'audit trail deve comunque registrare
-`status='failed'` con l'errore, non sparire insieme al rollback dei dati.
+`ingestion_run()` traccia ogni esecuzione in `audit.t_ingestion_runs`
+delegando a `IngestionRunAudit` (`marketmind_db.audit`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from marketmind_db.models.audit import IngestionRun
+from marketmind_db.audit import IngestionRunAudit
+from marketmind_db.database import default_database
 from marketmind_db.models.market_data import (
     Asset,
     CompanyEvent,
@@ -33,7 +30,7 @@ from marketmind_db.models.market_data import (
     UniverseMember,
 )
 from marketmind_db.models.raw import CompanyEventRaw, NewsEventRaw
-from marketmind_db.session import get_session, track_ingestion_run
+from marketmind_db.session import get_session
 from marketmind_db.schemas import (
     AssetRecord,
     CompanyEventRecord,
@@ -317,16 +314,8 @@ def write_company_event(
     session.execute(raw_stmt)
 
 
-@dataclass
-class IngestionRunTracker:
-    """Handle mutabile restituito da `ingestion_run()` per accumulare `rows_written`."""
-
-    run_id: int
-    rows_written: int = 0
-
-
 @contextmanager
-def ingestion_run(source: str, target_table: str) -> Iterator[IngestionRunTracker]:
+def ingestion_run(source: str, target_table: str) -> Iterator[IngestionRunAudit]:
     """Traccia un'esecuzione di pipeline in `audit.t_ingestion_runs`.
 
     Uso tipico::
@@ -336,55 +325,11 @@ def ingestion_run(source: str, target_table: str) -> Iterator[IngestionRunTracke
                 ...
                 run.rows_written += 1
 
-    La riga passa a `status='running'` subito (commit immediato, sessione
-    propria), poi a `success`/`failed` all'uscita del blocco — in una
-    sessione propria anche in caso di eccezione, cosicché un fallimento
-    nella transazione dati del chiamante non si porti via anche il record
-    di audit del fallimento stesso.
-
-    Il corpo del blocco (`yield`) gira sotto `track_ingestion_run(run_id)`
-    (`db/session.py`): ogni `get_session()` che la pipeline apre al suo
-    interno imposta da sé `marketmind.ingestion_run_id`, così le righe che
-    scrive in `market_data` restano collegate a questo run in
-    `audit.t_audit_logs` via il trigger generico — nessun cambiamento
-    richiesto alle pipeline stesse.
+    Involucro di `IngestionRunAudit` (`marketmind_db.audit`) sul `Database`
+    condiviso, per le pipeline non ancora migrate a `BasePipeline`: riga
+    `running` subito, poi `success`/`failed` all'uscita in una transazione
+    propria, e `run_id` tracciato nel blocco per il collegamento con
+    `audit.t_audit_logs`.
     """
-    with get_session() as session:
-        run = IngestionRun(
-            source=source,
-            target_table=target_table,
-            started_at=datetime.now(timezone.utc),
-            status="running",
-        )
-        session.add(run)
-        session.flush()
-        run_id = run.run_id
-
-    tracker = IngestionRunTracker(run_id=run_id)
-    try:
-        with track_ingestion_run(run_id):
-            yield tracker
-    except Exception as exc:
-        with get_session() as session:
-            session.execute(
-                update(IngestionRun)
-                .where(IngestionRun.run_id == run_id)
-                .values(
-                    status="failed",
-                    finished_at=datetime.now(timezone.utc),
-                    rows_written=tracker.rows_written,
-                    error_message=str(exc)[:2000],
-                )
-            )
-        raise
-    else:
-        with get_session() as session:
-            session.execute(
-                update(IngestionRun)
-                .where(IngestionRun.run_id == run_id)
-                .values(
-                    status="success",
-                    finished_at=datetime.now(timezone.utc),
-                    rows_written=tracker.rows_written,
-                )
-            )
+    with IngestionRunAudit(default_database(), source, target_table) as run:
+        yield run
