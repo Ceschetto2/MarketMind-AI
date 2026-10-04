@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
-from marketmind_ai.ingestion.gdelt_ngrams_pipeline import (
+from marketmind_pipelines.gdelt_ngrams_pipeline import (
     _build_records,
     _candidate_timestamps,
     _download_gz,
@@ -23,7 +23,7 @@ from marketmind_ai.ingestion.gdelt_ngrams_pipeline import (
     _parse_ngrams,
     _parse_toc,
 )
-from marketmind_ai.schemas import NewsEventRecord
+from marketmind_db.schemas import NewsEventRecord
 
 UNIVERSE = [("AAPL", "Apple Inc."), ("MSFT", "Microsoft Corporation"), ("V", "Visa Inc.")]
 

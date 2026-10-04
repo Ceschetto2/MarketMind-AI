@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from marketmind_ai.schemas import (
+from marketmind_db.schemas import (
     AssetRecord,
     CompanyEventRecord,
     MacroEventRecord,

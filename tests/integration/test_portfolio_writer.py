@@ -14,18 +14,18 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.decisions import ModelRun
-from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.models.portfolio import (
+from marketmind_db.models.decisions import ModelRun
+from marketmind_db.models.market_data import Asset
+from marketmind_db.models.portfolio import (
     Portfolio,
     PortfolioPosition,
     PortfolioPositionSnapshot,
     PortfolioSnapshot,
     PortfolioWatchlistEntry,
 )
-from marketmind_ai.db.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
-from marketmind_ai.db.session import get_session, track_model_run
-from marketmind_ai.llm.schemas import Decision
+from marketmind_db.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
+from marketmind_db.session import get_session, track_model_run
+from marketmind_llm_decision_engine.llm.schemas import Decision
 
 pytestmark = pytest.mark.integration
 

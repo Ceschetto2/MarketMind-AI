@@ -13,10 +13,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.session import get_session
-from marketmind_ai.ingestion.yfinance_assets_pipeline import run
+from marketmind_db.models.audit import IngestionRun
+from marketmind_db.models.market_data import Asset
+from marketmind_db.session import get_session
+from marketmind_pipelines.yfinance_assets_pipeline import run
 
 pytestmark = pytest.mark.integration
 

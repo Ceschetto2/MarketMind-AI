@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from marketmind_ai.decision_engine.schemas import (
+from marketmind_llm_decision_engine.decision_engine.schemas import (
     AssetSummary,
     BootstrapContext,
     CompanyEventSnippet,

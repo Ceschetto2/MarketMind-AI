@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from marketmind_ai.ingestion.fred_pipeline import (
+from marketmind_pipelines.fred_pipeline import (
     FRED_OBSERVATIONS_URL,
     INDICATORS,
     SOURCE,
@@ -18,7 +18,7 @@ from marketmind_ai.ingestion.fred_pipeline import (
     _parse_observations,
     run,
 )
-from marketmind_ai.schemas import MacroEventRecord
+from marketmind_db.schemas import MacroEventRecord
 
 
 def _make_payload(observations: list[dict]) -> dict:
@@ -266,7 +266,7 @@ class TestRun:
 
         run()
 
-        from marketmind_ai.ingestion.fred_pipeline import _OBSERVATION_LOOKBACK_DAYS
+        from marketmind_pipelines.fred_pipeline import _OBSERVATION_LOOKBACK_DAYS
 
         expected_start = fixed_today - __import__("datetime").timedelta(
             days=_OBSERVATION_LOOKBACK_DAYS

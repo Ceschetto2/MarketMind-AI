@@ -1,0 +1,15 @@
+# Trigger primario della pipeline `finnhub-earnings` — cadenza giornaliera:
+# il calendario earnings cambia poco da un giorno all'altro. Il suo
+# completamento innesca a cascata `marketmind-ingest-fmp.service` via
+# `OnSuccess=` (vedi il `.container`), che non ha quindi bisogno di un
+# proprio timer.
+
+[Unit]
+Description=MarketMind AI — timer ingestion finnhub-earnings (giornaliera)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

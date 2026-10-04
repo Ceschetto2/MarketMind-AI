@@ -19,11 +19,11 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, CompanyEvent
-from marketmind_ai.db.models.raw import CompanyEventRaw
-from marketmind_ai.db.session import get_session
-from marketmind_ai.ingestion.fmp_pipeline import run
+from marketmind_db.models.audit import IngestionRun
+from marketmind_db.models.market_data import Asset, CompanyEvent
+from marketmind_db.models.raw import CompanyEventRaw
+from marketmind_db.session import get_session
+from marketmind_pipelines.fmp_pipeline import run
 
 pytestmark = pytest.mark.integration
 

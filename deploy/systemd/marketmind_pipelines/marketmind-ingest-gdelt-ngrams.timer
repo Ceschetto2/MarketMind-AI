@@ -1,0 +1,14 @@
+# Trigger primario della pipeline `gdelt-ngrams` — ogni 15 minuti, allineato
+# al battito nativo della pipeline Web NGrams di GDELT (nuovi file ogni
+# minuto, ma clusterizzati ogni quarto d'ora, con buchi nel mezzo — la
+# pipeline stessa tratta un minuto senza file come normale, non errore).
+
+[Unit]
+Description=MarketMind AI — timer ingestion gdelt-ngrams (ogni 15 min)
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target

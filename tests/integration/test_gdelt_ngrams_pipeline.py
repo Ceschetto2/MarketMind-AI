@@ -14,11 +14,11 @@ import json
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import Asset, NewsEvent, UniverseMember
-from marketmind_ai.db.models.raw import NewsEventRaw
-from marketmind_ai.db.session import get_session
-from marketmind_ai.ingestion.gdelt_ngrams_pipeline import run
+from marketmind_db.models.audit import IngestionRun
+from marketmind_db.models.market_data import Asset, NewsEvent, UniverseMember
+from marketmind_db.models.raw import NewsEventRaw
+from marketmind_db.session import get_session
+from marketmind_pipelines.gdelt_ngrams_pipeline import run
 
 pytestmark = pytest.mark.integration
 

@@ -15,8 +15,8 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.audit import AuditLog, IngestionRun
-from marketmind_ai.db.models.market_data import (
+from marketmind_db.models.audit import AuditLog, IngestionRun
+from marketmind_db.models.market_data import (
     Asset,
     CompanyEvent,
     MacroEvent,
@@ -24,9 +24,9 @@ from marketmind_ai.db.models.market_data import (
     NewsEvent,
     UniverseMember,
 )
-from marketmind_ai.db.models.raw import CompanyEventRaw, NewsEventRaw
-from marketmind_ai.db.session import get_session
-from marketmind_ai.db.writer import (
+from marketmind_db.models.raw import CompanyEventRaw, NewsEventRaw
+from marketmind_db.session import get_session
+from marketmind_db.writer import (
     AssetNotFoundError,
     get_universe_symbols,
     ingestion_run,
@@ -39,7 +39,7 @@ from marketmind_ai.db.writer import (
     write_company_event,
     write_news_event,
 )
-from marketmind_ai.schemas import (
+from marketmind_db.schemas import (
     AssetRecord,
     CompanyEventRecord,
     MacroEventRecord,

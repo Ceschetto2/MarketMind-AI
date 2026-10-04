@@ -13,13 +13,13 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
-from marketmind_ai.db.writer import AssetNotFoundError
-from marketmind_ai.ingestion.finnhub_news_pipeline import (
+from marketmind_db.writer import AssetNotFoundError
+from marketmind_pipelines.finnhub_news_pipeline import (
     _articles_to_records,
     _fetch_company_news,
     run,
 )
-from marketmind_ai.schemas import NewsEventRecord
+from marketmind_db.schemas import NewsEventRecord
 
 
 def _make_article(**overrides) -> dict:

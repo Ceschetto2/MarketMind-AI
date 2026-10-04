@@ -10,13 +10,13 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from marketmind_ai.db.writer import AssetNotFoundError
-from marketmind_ai.ingestion.yfinance_prices_pipeline import (
+from marketmind_db.writer import AssetNotFoundError
+from marketmind_pipelines.yfinance_prices_pipeline import (
     _fetch_history,
     _rows_to_records,
     run,
 )
-from marketmind_ai.schemas import MarketPriceRecord
+from marketmind_db.schemas import MarketPriceRecord
 
 
 def _make_history_df() -> pd.DataFrame:

@@ -5,7 +5,7 @@ testata direttamente contro una sessione mockata.
 
 from __future__ import annotations
 
-from marketmind_ai.db.session import _apply_run_context, track_ingestion_run, track_model_run
+from marketmind_db.session import _apply_run_context, track_ingestion_run, track_model_run
 
 
 class TestApplyRunContext:

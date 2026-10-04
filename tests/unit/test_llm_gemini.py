@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from marketmind_ai.llm.exceptions import DecisionError
-from marketmind_ai.llm.gemini import GeminiProvider, _call_gemini
-from marketmind_ai.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+from marketmind_llm_decision_engine.llm.gemini import GeminiProvider, _call_gemini
+from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
 
 def _mock_response(mocker, text: str):

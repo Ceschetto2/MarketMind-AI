@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
-from marketmind_ai.db.portfolio_reader import (
+from marketmind_db.models.market_data import Asset
+from marketmind_db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
+from marketmind_db.portfolio_reader import (
     get_active_model_portfolios,
     get_due_model_portfolios,
     get_portfolio,

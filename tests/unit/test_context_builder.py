@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from marketmind_ai.decision_engine.context_builder import (
+from marketmind_llm_decision_engine.decision_engine.context_builder import (
     DEFAULT_COMPANY_EVENT_DAYS_BACK,
     DEFAULT_NEWS_DAYS_BACK,
     DEFAULT_NEWS_MAX_ITEMS,

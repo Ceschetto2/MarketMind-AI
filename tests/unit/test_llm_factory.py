@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from marketmind_ai.llm.factory import get_provider
-from marketmind_ai.llm.gemini import GeminiProvider
+from marketmind_llm_decision_engine.llm.factory import get_provider
+from marketmind_llm_decision_engine.llm.gemini import GeminiProvider
 
 
 class TestGetProvider:

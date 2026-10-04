@@ -10,9 +10,9 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from marketmind_ai.db.backtest_writer import write_backtest_result
-from marketmind_ai.db.models.decisions import BacktestResult, ModelRun
-from marketmind_ai.db.models.portfolio import Portfolio
+from marketmind_db.backtest_writer import write_backtest_result
+from marketmind_db.models.decisions import BacktestResult, ModelRun
+from marketmind_db.models.portfolio import Portfolio
 
 pytestmark = pytest.mark.integration
 

@@ -15,10 +15,10 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from marketmind_ai.db.backtest_reader import get_position_events
-from marketmind_ai.db.models.decisions import ModelRun
-from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.models.portfolio import Portfolio, PortfolioPosition
+from marketmind_db.backtest_reader import get_position_events
+from marketmind_db.models.decisions import ModelRun
+from marketmind_db.models.market_data import Asset
+from marketmind_db.models.portfolio import Portfolio, PortfolioPosition
 
 pytestmark = pytest.mark.integration
 

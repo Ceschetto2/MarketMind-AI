@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from marketmind_ai.decision_engine.engine import (
+from marketmind_llm_decision_engine.decision_engine.engine import (
     DEFAULT_DECISION_INTERVAL,
     initialize_portfolio,
     run_due_decisions,
 )
-from marketmind_ai.llm.exceptions import DecisionError
-from marketmind_ai.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
 AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
 

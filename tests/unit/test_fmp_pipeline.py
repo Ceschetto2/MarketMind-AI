@@ -11,14 +11,14 @@ from datetime import date, datetime, timezone
 import pytest
 import requests
 
-from marketmind_ai.ingestion.fmp_pipeline import (
+from marketmind_pipelines.fmp_pipeline import (
     ENDPOINTS,
     SOURCE,
     _fetch_endpoint,
     _latest_record,
     _statements_to_record,
 )
-from marketmind_ai.schemas import CompanyEventRecord
+from marketmind_db.schemas import CompanyEventRecord
 
 
 def _make_statement(**overrides) -> dict:

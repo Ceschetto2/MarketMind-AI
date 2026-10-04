@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from marketmind_ai.llm.schemas import Decision, DeferralRequest, WatchlistSelection
+from marketmind_llm_decision_engine.llm.schemas import Decision, DeferralRequest, WatchlistSelection
 
 
 class TestDecision:

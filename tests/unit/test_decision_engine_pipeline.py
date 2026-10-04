@@ -6,7 +6,7 @@ fondo in `test_engine.py` — qui si verifica solo il collegamento.
 
 from __future__ import annotations
 
-from marketmind_ai.decision_engine.pipeline import run
+from marketmind_llm_decision_engine.decision_engine.pipeline import run
 
 
 def test_run_delegates_to_run_due_decisions(mocker):

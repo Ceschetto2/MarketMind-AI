@@ -1,0 +1,12 @@
+# Trigger primario della pipeline `yfinance-assets` — cadenza mensile:
+# l'anagrafica (`.info`) cambia di rado, a differenza dei prezzi orari.
+
+[Unit]
+Description=MarketMind AI — timer ingestion yfinance-assets (mensile)
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

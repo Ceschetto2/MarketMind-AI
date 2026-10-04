@@ -11,8 +11,8 @@ import subprocess
 
 import pytest
 
-from marketmind_ai.orchestration.exceptions import OrchestrationError
-from marketmind_ai.orchestration.scheduler import (
+from marketmind_llm_decision_engine.orchestration.exceptions import OrchestrationError
+from marketmind_llm_decision_engine.orchestration.scheduler import (
     schedule_transient_run,
     trigger_ingestion_pipeline,
 )

@@ -13,10 +13,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.audit import IngestionRun
-from marketmind_ai.db.models.market_data import MacroEvent
-from marketmind_ai.db.session import get_session
-from marketmind_ai.ingestion.fred_pipeline import INDICATORS, run
+from marketmind_db.models.audit import IngestionRun
+from marketmind_db.models.market_data import MacroEvent
+from marketmind_db.session import get_session
+from marketmind_pipelines.fred_pipeline import INDICATORS, run
 
 pytestmark = pytest.mark.integration
 

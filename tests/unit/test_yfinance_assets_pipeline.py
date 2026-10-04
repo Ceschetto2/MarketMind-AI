@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from marketmind_ai.ingestion.yfinance_assets_pipeline import _fetch_info, _info_to_record, run
-from marketmind_ai.schemas import AssetRecord
+from marketmind_pipelines.yfinance_assets_pipeline import _fetch_info, _info_to_record, run
+from marketmind_db.schemas import AssetRecord
 
 
 def _make_info(**overrides) -> dict:

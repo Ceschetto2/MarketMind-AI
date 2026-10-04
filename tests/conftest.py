@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from marketmind_ai.db.session import get_engine
+from marketmind_db.session import get_engine
 
 
 @pytest.fixture(scope="session")
