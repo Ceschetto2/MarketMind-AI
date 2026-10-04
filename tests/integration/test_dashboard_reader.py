@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from marketmind_db.dashboard_reader import (
+from marketmind_frontend.dashboard_reader import (
     get_cash_history,
     get_decision_log,
     list_portfolios,

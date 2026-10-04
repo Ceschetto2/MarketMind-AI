@@ -50,7 +50,7 @@ class TestDownloadGz:
         mock_response = mocker.Mock(status_code=200, content=content)
         mock_response.raise_for_status.return_value = None
         mocker.patch(
-            "marketmind_ai.ingestion.gdelt_ngrams_pipeline.requests.get",
+            "marketmind_pipelines.gdelt_ngrams_pipeline.requests.get",
             return_value=mock_response,
         )
 
@@ -64,7 +64,7 @@ class TestDownloadGz:
         eccezione."""
         mock_response = mocker.Mock(status_code=404)
         mocker.patch(
-            "marketmind_ai.ingestion.gdelt_ngrams_pipeline.requests.get",
+            "marketmind_pipelines.gdelt_ngrams_pipeline.requests.get",
             return_value=mock_response,
         )
 
@@ -77,7 +77,7 @@ class TestDownloadGz:
         mock_response = mocker.Mock(status_code=200, content=content)
         mock_response.raise_for_status.return_value = None
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.gdelt_ngrams_pipeline.requests.get",
+            "marketmind_pipelines.gdelt_ngrams_pipeline.requests.get",
             side_effect=[
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
                 mock_response,

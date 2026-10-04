@@ -87,7 +87,7 @@ class TestFetchHistoryRetry:
             expected_df,
         ]
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.yf.Ticker",
+            "marketmind_pipelines.yfinance_prices_pipeline.yf.Ticker",
             return_value=mock_ticker,
         )
         mocker.patch.object(_fetch_history.retry, "sleep", lambda _seconds: None)
@@ -101,7 +101,7 @@ class TestFetchHistoryRetry:
         mock_ticker = mocker.Mock()
         mock_ticker.history.side_effect = ConnectionError("rete non raggiungibile")
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.yf.Ticker",
+            "marketmind_pipelines.yfinance_prices_pipeline.yf.Ticker",
             return_value=mock_ticker,
         )
         mocker.patch.object(_fetch_history.retry, "sleep", lambda _seconds: None)
@@ -119,45 +119,45 @@ class TestRun:
 
     def test_asset_not_found_for_one_symbol_does_not_block_the_others(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.get_universe_symbols",
+            "marketmind_pipelines.yfinance_prices_pipeline.get_universe_symbols",
             return_value=["AAA", "BBB"],
         )
         # niente attese reali tra i ticker
-        mocker.patch("marketmind_ai.ingestion.yfinance_prices_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.yfinance_prices_pipeline.time.sleep")
 
         history_aaa = mocker.Mock(empty=False)
         history_bbb = mocker.Mock(empty=False)
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline._fetch_history",
+            "marketmind_pipelines.yfinance_prices_pipeline._fetch_history",
             side_effect=[history_aaa, history_bbb],
         )
 
         records_aaa = [mocker.Mock(name="record_aaa")]
         records_bbb = [mocker.Mock(name="record_bbb")]
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline._rows_to_records",
+            "marketmind_pipelines.yfinance_prices_pipeline._rows_to_records",
             side_effect=[records_aaa, records_bbb],
         )
 
         mock_session = mocker.MagicMock(name="session")
         mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.get_session"
+            "marketmind_pipelines.yfinance_prices_pipeline.get_session"
         )
         mock_get_session.return_value.__enter__.return_value = mock_session
 
         # AAA non ancora in t_assets: la pipeline logga e passa a BBB senza
         # interrompersi (comportamento sotto test).
         mock_resolve_asset_id = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.resolve_asset_id",
+            "marketmind_pipelines.yfinance_prices_pipeline.resolve_asset_id",
             side_effect=[AssetNotFoundError("AAA non trovato in t_assets"), 42],
         )
         mock_upsert = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.upsert_market_price"
+            "marketmind_pipelines.yfinance_prices_pipeline.upsert_market_price"
         )
 
         tracker = mocker.Mock(rows_written=0)
         mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.ingestion_run"
+            "marketmind_pipelines.yfinance_prices_pipeline.ingestion_run"
         )
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 

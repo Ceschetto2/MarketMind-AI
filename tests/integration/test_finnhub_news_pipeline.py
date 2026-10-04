@@ -79,12 +79,12 @@ class TestRunEndToEnd:
             )
 
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_universe_symbols",
+            "marketmind_pipelines.finnhub_news_pipeline.get_universe_symbols",
             return_value=["TESTX"],
         )
-        mocker.patch("marketmind_ai.ingestion.finnhub_news_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.finnhub_news_pipeline.time.sleep")
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline._fetch_company_news",
+            "marketmind_pipelines.finnhub_news_pipeline._fetch_company_news",
             return_value=[_fake_article()],
         )
 

@@ -77,7 +77,7 @@ class TestFetchCompanyNewsRetry:
         mock_response.raise_for_status.return_value = None
 
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.requests.get",
+            "marketmind_pipelines.finnhub_news_pipeline.requests.get",
             side_effect=[
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
@@ -85,7 +85,7 @@ class TestFetchCompanyNewsRetry:
             ],
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_api_key",
+            "marketmind_pipelines.finnhub_news_pipeline.get_api_key",
             return_value="fake-key",
         )
         mocker.patch.object(_fetch_company_news.retry, "sleep", lambda _seconds: None)
@@ -97,11 +97,11 @@ class TestFetchCompanyNewsRetry:
 
     def test_propagates_after_stop_after_attempt(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.requests.get",
+            "marketmind_pipelines.finnhub_news_pipeline.requests.get",
             side_effect=requests.exceptions.ConnectionError("rete non raggiungibile"),
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_api_key",
+            "marketmind_pipelines.finnhub_news_pipeline.get_api_key",
             return_value="fake-key",
         )
         mocker.patch.object(_fetch_company_news.retry, "sleep", lambda _seconds: None)
@@ -116,38 +116,38 @@ class TestRun:
 
     def test_asset_not_found_for_one_symbol_does_not_block_the_others(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_universe_symbols",
+            "marketmind_pipelines.finnhub_news_pipeline.get_universe_symbols",
             return_value=["AAA", "BBB"],
         )
         # niente attese reali tra i ticker
-        mocker.patch("marketmind_ai.ingestion.finnhub_news_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.finnhub_news_pipeline.time.sleep")
 
         articles_aaa = [_make_article(id=1, url="https://example.com/1")]
         articles_bbb = [_make_article(id=2, url="https://example.com/2")]
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline._fetch_company_news",
+            "marketmind_pipelines.finnhub_news_pipeline._fetch_company_news",
             side_effect=[articles_aaa, articles_bbb],
         )
 
         mock_session = mocker.MagicMock(name="session")
         mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_session"
+            "marketmind_pipelines.finnhub_news_pipeline.get_session"
         )
         mock_get_session.return_value.__enter__.return_value = mock_session
 
         # AAA non ancora in t_assets: la pipeline logga e passa a BBB senza
         # interrompersi (comportamento sotto test).
         mock_resolve_asset_id = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.resolve_asset_id",
+            "marketmind_pipelines.finnhub_news_pipeline.resolve_asset_id",
             side_effect=[AssetNotFoundError("AAA non trovato in t_assets"), 42],
         )
         mock_write_news_event = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.write_news_event"
+            "marketmind_pipelines.finnhub_news_pipeline.write_news_event"
         )
 
         tracker = mocker.Mock(rows_written=0)
         mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.ingestion_run"
+            "marketmind_pipelines.finnhub_news_pipeline.ingestion_run"
         )
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 
@@ -164,24 +164,24 @@ class TestRun:
 
     def test_symbol_with_no_articles_is_skipped_without_touching_db(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.get_universe_symbols",
+            "marketmind_pipelines.finnhub_news_pipeline.get_universe_symbols",
             return_value=["AAA"],
         )
-        mocker.patch("marketmind_ai.ingestion.finnhub_news_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.finnhub_news_pipeline.time.sleep")
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline._fetch_company_news",
+            "marketmind_pipelines.finnhub_news_pipeline._fetch_company_news",
             return_value=[],
         )
         mock_resolve_asset_id = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.resolve_asset_id"
+            "marketmind_pipelines.finnhub_news_pipeline.resolve_asset_id"
         )
         mock_write_news_event = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.write_news_event"
+            "marketmind_pipelines.finnhub_news_pipeline.write_news_event"
         )
 
         tracker = mocker.Mock(rows_written=0)
         mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_news_pipeline.ingestion_run"
+            "marketmind_pipelines.finnhub_news_pipeline.ingestion_run"
         )
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 

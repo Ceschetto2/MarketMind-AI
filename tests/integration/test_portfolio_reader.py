@@ -12,7 +12,7 @@ import pytest
 
 from marketmind_db.models.market_data import Asset
 from marketmind_db.models.portfolio import Portfolio, PortfolioPosition, PortfolioWatchlistEntry
-from marketmind_db.portfolio_reader import (
+from marketmind_llm_decision_engine.repositories.portfolio_reader import (
     get_active_model_portfolios,
     get_due_model_portfolios,
     get_portfolio,

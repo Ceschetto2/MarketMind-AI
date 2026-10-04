@@ -80,7 +80,7 @@ class TestRunEndToEnd:
 
     def test_run_end_to_end(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline.get_universe_symbols",
+            "marketmind_pipelines.yfinance_prices_pipeline.get_universe_symbols",
             return_value=["TESTX"],
         )
 
@@ -115,11 +115,11 @@ class TestRunEndToEnd:
             )
 
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_prices_pipeline._fetch_history",
+            "marketmind_pipelines.yfinance_prices_pipeline._fetch_history",
             return_value=_fake_history(),
         )
         # niente attesa reale tra ticker durante il test.
-        mocker.patch("marketmind_ai.ingestion.yfinance_prices_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.yfinance_prices_pipeline.time.sleep")
 
         try:
             run()

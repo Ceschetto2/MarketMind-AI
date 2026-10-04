@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from marketmind_db.decision_writer import create_model_run, write_model_decision
+from marketmind_llm_decision_engine.repositories.decision_writer import create_model_run, write_model_decision
 from marketmind_db.models.decisions import ModelDecision, ModelRun
 from marketmind_db.models.market_data import Asset
 from marketmind_db.models.portfolio import Portfolio

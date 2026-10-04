@@ -57,10 +57,10 @@ class TestRun:
         il caso da testare è un fetch fallito per un ticker che non deve
         bloccare gli altri."""
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.get_universe_symbols",
+            "marketmind_pipelines.yfinance_assets_pipeline.get_universe_symbols",
             return_value=["AAA", "BBB"],
         )
-        mocker.patch("marketmind_ai.ingestion.yfinance_assets_pipeline.time.sleep")
+        mocker.patch("marketmind_pipelines.yfinance_assets_pipeline.time.sleep")
         mocker.patch.object(_fetch_info.retry, "sleep", lambda _seconds: None)
 
         ticker_bbb = mocker.Mock(info=_make_info(symbol="BBB"))
@@ -71,23 +71,23 @@ class TestRun:
             return ticker_bbb
 
         mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.yf.Ticker",
+            "marketmind_pipelines.yfinance_assets_pipeline.yf.Ticker",
             side_effect=ticker_side_effect,
         )
 
         mock_session = mocker.MagicMock(name="session")
         mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.get_session"
+            "marketmind_pipelines.yfinance_assets_pipeline.get_session"
         )
         mock_get_session.return_value.__enter__.return_value = mock_session
 
         mock_upsert_asset = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.upsert_asset"
+            "marketmind_pipelines.yfinance_assets_pipeline.upsert_asset"
         )
 
         tracker = mocker.Mock(rows_written=0)
         mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.ingestion_run"
+            "marketmind_pipelines.yfinance_assets_pipeline.ingestion_run"
         )
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 

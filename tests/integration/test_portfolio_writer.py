@@ -23,7 +23,7 @@ from marketmind_db.models.portfolio import (
     PortfolioSnapshot,
     PortfolioWatchlistEntry,
 )
-from marketmind_db.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
+from marketmind_llm_decision_engine.repositories.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
 from marketmind_db.session import get_session, track_model_run
 from marketmind_llm_decision_engine.llm.schemas import Decision
 

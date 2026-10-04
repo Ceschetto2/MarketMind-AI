@@ -1,41 +1,46 @@
 [project]
-name = "marketmind-ai"
+name = "marketmind"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI Market Mind — root del workspace uv (non pubblicato come pacchetto)."
 readme = "README.md"
 authors = [
     { name = "Francesco", email = "francesco.bocci09@gmail.com" }
 ]
 requires-python = "==3.14.*"
+# La root non è un pacchetto installabile (`package = false`): dipende da
+# tutti i membri del workspace solo perché `uv sync` in sviluppo installi
+# l'intero progetto in un unico `.venv`, test e Alembic compresi. Ogni
+# immagine invece installa solo il proprio pacchetto e le sue dipendenze
+# (`uv sync --package <nome>`), non questa lista.
 dependencies = [
-    "alembic>=1.19.1",
-    "google-genai>=2.23.0",
-    "plotly<6",
-    "psycopg[binary]>=3.3.4",
-    "pydantic>=2.13.5",
-    "python-dotenv>=1.2.3",
-    "requests>=2.34.2",
-    "sqlalchemy>=2.0.52",
-    "streamlit>=1.63.0",
-    "tenacity>=9.1.4",
-    "vectorbt>=1.1.0",
-    "yfinance>=1.7.0",
+    "marketmind-common",
+    "marketmind-db",
+    "marketmind-pipelines",
+    "marketmind-llm-decision-engine",
+    "marketmind-frontend",
 ]
 
-[project.scripts]
-marketmind-ai = "marketmind_ai:main"
+[tool.uv]
+package = false
 
-[build-system]
-requires = ["uv_build>=0.12.1,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+marketmind-common = { workspace = true }
+marketmind-db = { workspace = true }
+marketmind-pipelines = { workspace = true }
+marketmind-llm-decision-engine = { workspace = true }
+marketmind-frontend = { workspace = true }
 
 [tool.alembic]
 # Config di Alembic (>=1.16 supporta [tool.alembic] in pyproject.toml al
 # posto di alembic.ini, che infatti non esiste più in questo repo — vedi
-# alembic/env.py per la parte che l'ini gestiva altrimenti, cioè logging e
-# sqlalchemy.url: quest'ultima non è mai qui perché env.py la calcola
-# sempre da marketmind_ai.config.get_database_url(), mai da file statico.
-script_location = "alembic"
+# deploy/alembic/env.py per la parte che l'ini gestiva altrimenti, cioè
+# logging e sqlalchemy.url: quest'ultima non è mai qui perché env.py la
+# calcola sempre da marketmind_common.config.get_database_url(), mai da
+# file statico.
+script_location = "deploy/alembic"
 prepend_sys_path = ["."]
 version_path_separator = "os"
 

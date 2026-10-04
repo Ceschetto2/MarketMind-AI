@@ -100,7 +100,7 @@ class TestRunEndToEnd:
         )
 
         mocker.patch(
-            "marketmind_ai.ingestion.gdelt_ngrams_pipeline._download_gz",
+            "marketmind_pipelines.gdelt_ngrams_pipeline._download_gz",
             side_effect=[_gz(ngrams_content), _gz(toc_content)],
         )
 
@@ -142,7 +142,7 @@ class TestRunEndToEnd:
             )
 
         mocker.patch(
-            "marketmind_ai.ingestion.gdelt_ngrams_pipeline._download_gz",
+            "marketmind_pipelines.gdelt_ngrams_pipeline._download_gz",
             return_value=None,
         )
 

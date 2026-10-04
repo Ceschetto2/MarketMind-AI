@@ -79,17 +79,17 @@ def _mock_position(mocker, symbol, quantity, avg_price):
 
 def _patch_empty_market_data(mocker):
     mocker.patch(
-        "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
+        "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_prices", return_value=[]
     )
     mocker.patch(
-        "marketmind_ai.decision_engine.context_builder.get_recent_news", return_value=[]
+        "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_news", return_value=[]
     )
     mocker.patch(
-        "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
+        "marketmind_llm_decision_engine.decision_engine.context_builder.get_latest_macro_events",
         return_value=[],
     )
     mocker.patch(
-        "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+        "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_company_events",
         return_value=[],
     )
 
@@ -97,25 +97,25 @@ def _patch_empty_market_data(mocker):
 class TestBuildContext:
     def test_uses_default_windows_when_not_overridden(self, mocker):
         mock_prices = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_prices", return_value=[]
         )
         mock_news = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_news", return_value=[]
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_news", return_value=[]
         )
         mock_macro = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_latest_macro_events",
             return_value=[],
         )
         mock_events = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_company_events",
             return_value=[],
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(mocker),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
@@ -140,14 +140,14 @@ class TestBuildContext:
     def test_accepts_window_overrides(self, mocker):
         _patch_empty_market_data(mocker)
         mock_prices = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_prices", return_value=[]
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_prices", return_value=[]
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(mocker),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
@@ -166,11 +166,11 @@ class TestBuildContext:
     def test_defaults_as_of_to_now_when_omitted(self, mocker):
         _patch_empty_market_data(mocker)
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(mocker),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
@@ -181,27 +181,27 @@ class TestBuildContext:
 
     def test_converts_orm_rows_into_typed_snippets(self, mocker):
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_prices",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_prices",
             return_value=[_mock_price(mocker, AS_OF, 150.0)],
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_news",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_news",
             return_value=[_mock_news(mocker, AS_OF, "titolo", 0.2)],
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_latest_macro_events",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_latest_macro_events",
             return_value=[_mock_macro(mocker, "UNRATE", date(2026, 8, 1), 4.1)],
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_recent_company_events",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_recent_company_events",
             return_value=[_mock_company_event(mocker, date(2026, 8, 15), "earnings")],
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(mocker, cash=25_000.0),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio_positions",
             return_value=[_mock_position(mocker, "MSFT", 5.0, 300.0)],
         )
         session = mocker.Mock()
@@ -224,11 +224,11 @@ class TestBuildContext:
         interrogare più portfolio insieme."""
         _patch_empty_market_data(mocker)
         mock_get_portfolio = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(mocker),
         )
         mock_get_positions = mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio_positions",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio_positions",
             return_value=[],
         )
         session = mocker.Mock()
@@ -251,13 +251,13 @@ def _mock_asset_row(mocker, symbol, name, sector, asset_type):
 class TestBuildBootstrapContext:
     def test_includes_portfolio_strategy_and_whole_universe(self, mocker):
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_portfolio",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_portfolio",
             return_value=_mock_portfolio(
                 mocker, portfolio_id=7, name="gemini-baseline", strategy_prompt="focus tech"
             ),
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.context_builder.get_decision_universe",
+            "marketmind_llm_decision_engine.decision_engine.context_builder.get_decision_universe",
             return_value=[
                 _mock_asset_row(mocker, "AAPL", "Apple Inc.", "Technology", "equity"),
                 _mock_asset_row(mocker, "XOM", "Exxon Mobil", "Energy", "equity"),

@@ -20,7 +20,7 @@ from marketmind_llm_decision_engine.orchestration.scheduler import (
 
 class TestScheduleTransientRun:
     def test_builds_systemd_run_command(self, mocker):
-        mock_run = mocker.patch("marketmind_ai.orchestration.scheduler.subprocess.run")
+        mock_run = mocker.patch("marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run")
 
         schedule_transient_run(["python", "-m", "some.module", "--asset-id=42"], delay_seconds=900)
 
@@ -32,7 +32,7 @@ class TestScheduleTransientRun:
         assert kwargs.get("check") is True
 
     def test_includes_unit_name_when_given(self, mocker):
-        mock_run = mocker.patch("marketmind_ai.orchestration.scheduler.subprocess.run")
+        mock_run = mocker.patch("marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run")
 
         schedule_transient_run(["echo", "ciao"], delay_seconds=60, unit_name="marketmind-defer-42")
 
@@ -42,7 +42,7 @@ class TestScheduleTransientRun:
 
     def test_raises_orchestration_error_on_failed_command(self, mocker):
         mocker.patch(
-            "marketmind_ai.orchestration.scheduler.subprocess.run",
+            "marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run",
             side_effect=subprocess.CalledProcessError(1, ["systemd-run"]),
         )
 
@@ -51,7 +51,7 @@ class TestScheduleTransientRun:
 
     def test_raises_orchestration_error_when_systemd_run_missing(self, mocker):
         mocker.patch(
-            "marketmind_ai.orchestration.scheduler.subprocess.run",
+            "marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run",
             side_effect=FileNotFoundError("systemd-run non trovato"),
         )
 
@@ -61,7 +61,7 @@ class TestScheduleTransientRun:
 
 class TestTriggerIngestionPipeline:
     def test_builds_systemctl_start_command(self, mocker):
-        mock_run = mocker.patch("marketmind_ai.orchestration.scheduler.subprocess.run")
+        mock_run = mocker.patch("marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run")
 
         trigger_ingestion_pipeline("finnhub-news")
 
@@ -76,7 +76,7 @@ class TestTriggerIngestionPipeline:
 
     def test_raises_orchestration_error_on_failed_command(self, mocker):
         mocker.patch(
-            "marketmind_ai.orchestration.scheduler.subprocess.run",
+            "marketmind_llm_decision_engine.orchestration.scheduler.subprocess.run",
             side_effect=subprocess.CalledProcessError(1, ["systemctl"]),
         )
 

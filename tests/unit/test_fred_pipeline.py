@@ -105,7 +105,7 @@ class TestFetchObservationsRetry:
         mock_response = mocker.Mock()
         mock_response.json.return_value = _make_payload([])
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.requests.get",
+            "marketmind_pipelines.fred_pipeline.requests.get",
             return_value=mock_response,
         )
 
@@ -131,7 +131,7 @@ class TestFetchObservationsRetry:
         expected_response = mocker.Mock()
         expected_response.json.return_value = expected_payload
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.requests.get",
+            "marketmind_pipelines.fred_pipeline.requests.get",
             side_effect=[
                 ConnectionError("rete non raggiungibile"),
                 ConnectionError("rete non raggiungibile"),
@@ -147,7 +147,7 @@ class TestFetchObservationsRetry:
 
     def test_propagates_after_stop_after_attempt(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.requests.get",
+            "marketmind_pipelines.fred_pipeline.requests.get",
             side_effect=ConnectionError("rete non raggiungibile"),
         )
         mocker.patch.object(_fetch_observations.retry, "sleep", lambda _seconds: None)
@@ -165,7 +165,7 @@ class TestFetchObservationsRetry:
             "429 Too Many Requests"
         )
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.requests.get",
+            "marketmind_pipelines.fred_pipeline.requests.get",
             return_value=mock_response,
         )
         mocker.patch.object(_fetch_observations.retry, "sleep", lambda _seconds: None)
@@ -180,7 +180,7 @@ class TestRun:
 
     def test_iterates_all_indicators_and_writes_records(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.get_api_key", return_value="fake-key"
+            "marketmind_pipelines.fred_pipeline.get_api_key", return_value="fake-key"
         )
 
         fake_records = {
@@ -188,22 +188,22 @@ class TestRun:
             for indicator in INDICATORS
         }
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._fetch_observations",
+            "marketmind_pipelines.fred_pipeline._fetch_observations",
             side_effect=lambda series_id, *a, **kw: f"payload_{series_id}",
         )
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._parse_observations",
+            "marketmind_pipelines.fred_pipeline._parse_observations",
             side_effect=lambda indicator, payload, fetched_at: fake_records[indicator],
         )
 
         mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch("marketmind_ai.ingestion.fred_pipeline.get_session")
+        mock_get_session = mocker.patch("marketmind_pipelines.fred_pipeline.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
 
-        mock_upsert = mocker.patch("marketmind_ai.ingestion.fred_pipeline.upsert_macro_event")
+        mock_upsert = mocker.patch("marketmind_pipelines.fred_pipeline.upsert_macro_event")
 
         tracker = mocker.Mock(rows_written=0)
-        mock_ingestion_run = mocker.patch("marketmind_ai.ingestion.fred_pipeline.ingestion_run")
+        mock_ingestion_run = mocker.patch("marketmind_pipelines.fred_pipeline.ingestion_run")
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 
         run()
@@ -215,27 +215,27 @@ class TestRun:
 
     def test_fetch_failure_for_one_indicator_does_not_block_the_others(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.get_api_key", return_value="fake-key"
+            "marketmind_pipelines.fred_pipeline.get_api_key", return_value="fake-key"
         )
 
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._fetch_observations",
+            "marketmind_pipelines.fred_pipeline._fetch_observations",
             side_effect=[Exception("fetch fallito"), "payload_ok", "payload_ok", "payload_ok"],
         )
         good_record = mocker.Mock(name="record_ok")
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._parse_observations",
+            "marketmind_pipelines.fred_pipeline._parse_observations",
             return_value=[good_record],
         )
 
         mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch("marketmind_ai.ingestion.fred_pipeline.get_session")
+        mock_get_session = mocker.patch("marketmind_pipelines.fred_pipeline.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
 
-        mock_upsert = mocker.patch("marketmind_ai.ingestion.fred_pipeline.upsert_macro_event")
+        mock_upsert = mocker.patch("marketmind_pipelines.fred_pipeline.upsert_macro_event")
 
         tracker = mocker.Mock(rows_written=0)
-        mock_ingestion_run = mocker.patch("marketmind_ai.ingestion.fred_pipeline.ingestion_run")
+        mock_ingestion_run = mocker.patch("marketmind_pipelines.fred_pipeline.ingestion_run")
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 
         run()
@@ -246,23 +246,23 @@ class TestRun:
 
     def test_default_observation_start_is_lookback_window_before_today(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline.get_api_key", return_value="fake-key"
+            "marketmind_pipelines.fred_pipeline.get_api_key", return_value="fake-key"
         )
         mock_fetch = mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._fetch_observations",
+            "marketmind_pipelines.fred_pipeline._fetch_observations",
             return_value=_make_payload([]),
         )
         mocker.patch(
-            "marketmind_ai.ingestion.fred_pipeline._parse_observations", return_value=[]
+            "marketmind_pipelines.fred_pipeline._parse_observations", return_value=[]
         )
-        mock_get_session = mocker.patch("marketmind_ai.ingestion.fred_pipeline.get_session")
+        mock_get_session = mocker.patch("marketmind_pipelines.fred_pipeline.get_session")
         mock_get_session.return_value.__enter__.return_value = mocker.MagicMock()
         tracker = mocker.Mock(rows_written=0)
-        mock_ingestion_run = mocker.patch("marketmind_ai.ingestion.fred_pipeline.ingestion_run")
+        mock_ingestion_run = mocker.patch("marketmind_pipelines.fred_pipeline.ingestion_run")
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 
         fixed_today = date(2026, 9, 6)
-        mocker.patch("marketmind_ai.ingestion.fred_pipeline._today", return_value=fixed_today)
+        mocker.patch("marketmind_pipelines.fred_pipeline._today", return_value=fixed_today)
 
         run()
 

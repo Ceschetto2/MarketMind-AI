@@ -1,0 +1,12 @@
+[project]
+name = "marketmind-common"
+version = "0.1.0"
+description = "Configurazione e logging condivisi da tutti i pacchetti MarketMind AI."
+requires-python = "==3.14.*"
+dependencies = [
+    "python-dotenv>=1.2.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"

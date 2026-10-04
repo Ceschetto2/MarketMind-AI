@@ -87,7 +87,7 @@ class TestFetchEndpointRetry:
         mock_response.raise_for_status.return_value = None
 
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.fmp_pipeline.requests.get",
+            "marketmind_pipelines.fmp_pipeline.requests.get",
             side_effect=[
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
@@ -103,7 +103,7 @@ class TestFetchEndpointRetry:
 
     def test_propagates_after_stop_after_attempt(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.fmp_pipeline.requests.get",
+            "marketmind_pipelines.fmp_pipeline.requests.get",
             side_effect=requests.exceptions.ConnectionError("rete non raggiungibile"),
         )
         mocker.patch.object(_fetch_endpoint.retry, "sleep", lambda _seconds: None)

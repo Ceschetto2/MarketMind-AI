@@ -1,0 +1,24 @@
+[project]
+name = "marketmind-llm-decision-engine"
+version = "0.1.0"
+description = "Decision Engine LLM, orchestrazione dei rinvii e backtest."
+requires-python = "==3.14.*"
+dependencies = [
+    "marketmind-common",
+    "marketmind-db",
+    "google-genai>=2.23.0",
+    "pandas",
+    "plotly<6",
+    "pydantic>=2.13.5",
+    "sqlalchemy>=2.0.52",
+    "tenacity>=9.1.4",
+    "vectorbt>=1.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+marketmind-common = { workspace = true }
+marketmind-db = { workspace = true }

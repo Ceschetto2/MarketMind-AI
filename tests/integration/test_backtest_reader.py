@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from marketmind_db.backtest_reader import get_position_events
+from marketmind_llm_decision_engine.repositories.backtest_reader import get_position_events
 from marketmind_db.models.decisions import ModelRun
 from marketmind_db.models.market_data import Asset
 from marketmind_db.models.portfolio import Portfolio, PortfolioPosition

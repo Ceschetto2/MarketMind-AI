@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from marketmind_db.context_reader import (
+from marketmind_llm_decision_engine.repositories.context_reader import (
     get_decision_universe,
     get_latest_macro_events,
     get_recent_company_events,

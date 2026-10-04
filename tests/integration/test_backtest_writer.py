@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from marketmind_db.backtest_writer import write_backtest_result
+from marketmind_llm_decision_engine.repositories.backtest_writer import write_backtest_result
 from marketmind_db.models.decisions import BacktestResult, ModelRun
 from marketmind_db.models.portfolio import Portfolio
 

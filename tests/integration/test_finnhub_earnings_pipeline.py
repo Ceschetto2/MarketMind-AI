@@ -69,15 +69,15 @@ class TestRunEndToEnd:
             )
 
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_api_key",
+            "marketmind_pipelines.finnhub_earnings_pipeline.get_api_key",
             return_value="fake-key",
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_universe_symbols",
+            "marketmind_pipelines.finnhub_earnings_pipeline.get_universe_symbols",
             return_value=["TESTX"],
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline._fetch_earnings_calendar",
+            "marketmind_pipelines.finnhub_earnings_pipeline._fetch_earnings_calendar",
             return_value=[
                 {
                     "symbol": "TESTX",

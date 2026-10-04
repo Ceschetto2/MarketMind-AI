@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from marketmind_frontend.dashboard.app import (
+from marketmind_frontend.app import (
     _cash_history_dataframe,
     _cost_basis,
     _decisions_dataframe,

@@ -38,14 +38,14 @@ def _event(mocker, asset_id, symbol, ts, quantity, avg_price, operation="INSERT"
 
 def _patch(mocker, events, prices_by_asset, starting_capital=10_000.0):
     mocker.patch(
-        "marketmind_ai.backtest.engine.get_position_events", return_value=events
+        "marketmind_llm_decision_engine.backtest.engine.get_position_events", return_value=events
     )
     mocker.patch(
-        "marketmind_ai.backtest.engine.get_recent_prices",
+        "marketmind_llm_decision_engine.backtest.engine.get_recent_prices",
         side_effect=lambda session, asset_id, as_of, days_back: prices_by_asset[asset_id],
     )
     mocker.patch(
-        "marketmind_ai.backtest.engine.get_portfolio",
+        "marketmind_llm_decision_engine.backtest.engine.get_portfolio",
         return_value=mocker.Mock(starting_capital=starting_capital),
     )
 

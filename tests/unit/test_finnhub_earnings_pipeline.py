@@ -76,7 +76,7 @@ class TestFetchEarningsCalendarRetry:
         mock_response.raise_for_status.return_value = None
 
         mock_get = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.requests.get",
+            "marketmind_pipelines.finnhub_earnings_pipeline.requests.get",
             side_effect=[
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
                 requests.exceptions.ConnectionError("rete non raggiungibile"),
@@ -94,7 +94,7 @@ class TestFetchEarningsCalendarRetry:
 
     def test_propagates_after_stop_after_attempt(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.requests.get",
+            "marketmind_pipelines.finnhub_earnings_pipeline.requests.get",
             side_effect=requests.exceptions.ConnectionError("rete non raggiungibile"),
         )
         mocker.patch.object(
@@ -108,35 +108,35 @@ class TestFetchEarningsCalendarRetry:
 class TestRun:
     def test_asset_not_found_for_one_symbol_does_not_block_the_others(self, mocker):
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_api_key",
+            "marketmind_pipelines.finnhub_earnings_pipeline.get_api_key",
             return_value="fake-key",
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_universe_symbols",
+            "marketmind_pipelines.finnhub_earnings_pipeline.get_universe_symbols",
             return_value=["AAA", "BBB"],
         )
         mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline._fetch_earnings_calendar",
+            "marketmind_pipelines.finnhub_earnings_pipeline._fetch_earnings_calendar",
             return_value=[_make_event(symbol="AAA"), _make_event(symbol="BBB")],
         )
 
         mock_session = mocker.MagicMock(name="session")
         mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_session"
+            "marketmind_pipelines.finnhub_earnings_pipeline.get_session"
         )
         mock_get_session.return_value.__enter__.return_value = mock_session
 
         mock_resolve_asset_id = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.resolve_asset_id",
+            "marketmind_pipelines.finnhub_earnings_pipeline.resolve_asset_id",
             side_effect=[AssetNotFoundError("AAA non trovato in t_assets"), 42],
         )
         mock_write_company_event = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.write_company_event"
+            "marketmind_pipelines.finnhub_earnings_pipeline.write_company_event"
         )
 
         tracker = mocker.Mock(rows_written=0)
         mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.ingestion_run"
+            "marketmind_pipelines.finnhub_earnings_pipeline.ingestion_run"
         )
         mock_ingestion_run.return_value.__enter__.return_value = tracker
 
