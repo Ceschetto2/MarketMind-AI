@@ -12,11 +12,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# packages/marketmind_common/src/marketmind_common/config.py -> root del repo.
+# packages/marketmind_common/src/config.py -> root del repo.
 # Installato come wheel in un'immagine (site-packages) il percorso non porta
 # a nessun `.env`, e `load_dotenv` non fa nulla: lì le variabili arrivano
 # dall'ambiente del container (Quadlet `Environment=`/`Secret=`).
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
 
 

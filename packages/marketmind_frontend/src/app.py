@@ -1,7 +1,7 @@
 """Dashboard Streamlit — interfaccia di visualizzazione, sola lettura.
 
 Unico entry point standalone del modulo (avviato con `streamlit run
-packages/marketmind_frontend/src/marketmind_frontend/app.py`, non un modulo di libreria): chiama
+packages/marketmind_frontend/src/app.py`, non un modulo di libreria): chiama
 `configure_logging()` all'avvio, coerente con la convenzione di logging di
 progetto (`Market Mind AI - Docs/Architettura/04_logging.md`). Non fa
 query dirette a Postgres: passa sempre da `dashboard_reader.py` di questo stesso

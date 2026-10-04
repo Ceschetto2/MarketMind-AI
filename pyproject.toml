@@ -22,6 +22,13 @@ dependencies = [
 
 [tool.uv]
 package = false
+# Install editable "strict" di setuptools: invece di un import hook (che
+# Pylance/pyright non sanno seguire, perché il codice sta in `src/` e non in
+# una cartella col nome di import) crea in `packages/<nome>/build/` un
+# albero di link `<nome>/...` verso i file di `src/`, raggiungibile da un
+# `.pth`. Le modifiche ai file esistenti si vedono subito; un modulo nuovo
+# richiede `uv sync --reinstall-package <nome>`.
+config-settings = { editable_mode = "strict" }
 
 [tool.uv.workspace]
 members = ["packages/*"]
