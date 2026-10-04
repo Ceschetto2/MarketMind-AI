@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import delete, select
 
-from marketmind_ai.db.models.audit import AuditLog, IngestionRun
+from marketmind_db.models.audit import AuditLog, IngestionRun
 
 pytestmark = pytest.mark.integration
 

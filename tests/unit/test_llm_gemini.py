@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from marketmind_ai.llm.exceptions import DecisionError
-from marketmind_ai.llm.gemini import GeminiProvider, _call_gemini
-from marketmind_ai.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+from marketmind_llm_decision_engine.llm.gemini import GeminiProvider, _call_gemini
+from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
 
 def _mock_response(mocker, text: str):
@@ -27,7 +27,7 @@ class TestDecide:
             '{"decision": "BUY", "confidence": 0.7, "reasoning": "trend positivo", "size_pct": 0.2}'
         )
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, valid_json),
         )
 
@@ -44,7 +44,7 @@ class TestDecide:
             '"size_pct": 0.3}\n```'
         )
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, fenced_json),
         )
 
@@ -57,7 +57,7 @@ class TestDecide:
     def test_raises_decision_error_on_invalid_json(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, "non è json"),
         )
 
@@ -67,7 +67,7 @@ class TestDecide:
     def test_raises_decision_error_on_schema_mismatch(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, '{"decision": "MAYBE"}'),
         )
 
@@ -77,7 +77,7 @@ class TestDecide:
     def test_raises_decision_error_when_call_fails_after_retries(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             side_effect=RuntimeError("rete non raggiungibile"),
         )
 
@@ -87,7 +87,7 @@ class TestDecide:
     def test_prompt_includes_serialized_context(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mock_call = mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(
                 mocker, '{"decision": "HOLD", "confidence": null, "reasoning": null}'
             ),
@@ -133,7 +133,7 @@ class TestSelectWatchlist:
         provider = GeminiProvider(api_key="fake-key")
         valid_json = '{"symbols": ["AAPL", "MSFT"], "reasoning": "focus tech"}'
         mock_call = mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, valid_json),
         )
 
@@ -146,7 +146,7 @@ class TestSelectWatchlist:
     def test_raises_decision_error_on_invalid_json(self, mocker):
         provider = GeminiProvider(api_key="fake-key")
         mocker.patch(
-            "marketmind_ai.llm.gemini._call_gemini",
+            "marketmind_llm_decision_engine.llm.gemini._call_gemini",
             return_value=_mock_response(mocker, "non è json"),
         )
 

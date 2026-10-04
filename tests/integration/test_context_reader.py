@@ -11,14 +11,14 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from marketmind_ai.db.context_reader import (
+from marketmind_llm_decision_engine.repositories.context_reader import (
     get_decision_universe,
     get_latest_macro_events,
     get_recent_company_events,
     get_recent_news,
     get_recent_prices,
 )
-from marketmind_ai.db.models.market_data import (
+from marketmind_db.models.market_data import (
     Asset,
     CompanyEvent,
     MacroEvent,

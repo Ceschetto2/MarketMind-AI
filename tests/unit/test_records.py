@@ -1,4 +1,4 @@
-"""Test unitari per le interfacce Pydantic in `schemas/records.py`.
+"""Test unitari per le interfacce Pydantic in `marketmind_pipelines.records`.
 
 Nessun accesso a DB o rete: sono classi Pydantic pure, il test verifica solo
 la validazione (campi obbligatori, default degli opzionali, `Literal`).
@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from marketmind_ai.schemas import (
+from marketmind_pipelines.records import (
     AssetRecord,
     CompanyEventRecord,
     MacroEventRecord,
@@ -189,11 +189,53 @@ class TestCompanyEventRecord:
             CompanyEventRecord(
                 symbol="AAPL",
                 ts=date(2026, 8, 1),
-                event_type="bankruptcy",  # non in Literal["earnings", "dividend", "split"]
+                event_type="bankruptcy",  # non tra i valori ammessi da event_type
                 raw_payload={},
                 source="finnhub",
                 fetched_at=FETCHED_AT,
             )
+
+
+    @pytest.mark.parametrize("event_type", ["income_statement", "balance_sheet", "cash_flow"])
+    def test_tre_bilanci_fmp_con_event_type_distinti(self, event_type):
+        """Migrazione `0009`: i tre bilanci FMP non sono più tutti `earnings`."""
+        record = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 6, 30),
+            event_type=event_type,
+            raw_payload={},
+            source="FMP",
+            fetched_at=FETCHED_AT,
+        )
+        assert record.event_type == event_type
+
+    def test_campi_identificativi_opzionali(self):
+        """Migrazione `0008`: sei colonne identificative, popolate solo da FMP."""
+        record = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 6, 30),
+            event_type="income_statement",
+            raw_payload={},
+            source="FMP",
+            fetched_at=FETCHED_AT,
+            fiscal_year="2026",
+            period="Q3",
+            reported_currency="USD",
+            cik="0000320193",
+            filing_date=date(2026, 8, 1),
+            accepted_date=date(2026, 8, 1),
+        )
+        assert (record.fiscal_year, record.period, record.cik) == ("2026", "Q3", "0000320193")
+
+        bare = CompanyEventRecord(
+            symbol="AAPL",
+            ts=date(2026, 6, 30),
+            event_type="earnings",
+            raw_payload={},
+            source="Finnhub",
+            fetched_at=FETCHED_AT,
+        )
+        assert bare.fiscal_year is None and bare.filing_date is None
 
 
 class TestUniverseMemberRecord:

@@ -1,0 +1,23 @@
+[project]
+name = "marketmind-common"
+version = "0.1.0"
+description = "Configurazione e logging condivisi da tutti i pacchetti MarketMind AI."
+requires-python = "==3.14.*"
+dependencies = [
+    "python-dotenv>=1.2.3",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+# Il codice sta direttamente in `src/`, senza la cartella `src/marketmind_common/`
+# in mezzo: `package-dir` fa corrispondere il nome di import `marketmind_common` a
+# `src/`. Va elencato ogni sottopacchetto (una cartella con `__init__.py`),
+# perché l'auto-discovery di setuptools ricaverebbe i nomi dalle cartelle
+# (`src.models`), non dal nome di import.
+[tool.setuptools]
+package-dir = { "marketmind_common" = "src" }
+packages = [
+    "marketmind_common",
+]

@@ -1,149 +1,61 @@
-"""Test unitari per la logica pura di `finnhub_earnings_pipeline.py`.
-
-Nessun accesso a rete/DB reale: `requests.get`, `get_api_key`, `get_session`
-e lo strato di scrittura sono mockati con `pytest-mock`.
-"""
+"""Test unitari di `finnhub_earnings_pipeline.py`: `HttpSource` è un mock."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-import pytest
-import requests
+from marketmind_pipelines.finnhub_earnings_pipeline import FinnhubEarningsPipeline, events_to_records
+from marketmind_pipelines.http import HttpSource
 
-from marketmind_ai.db.writer import AssetNotFoundError
-from marketmind_ai.ingestion.finnhub_earnings_pipeline import (
-    _events_to_records,
-    _fetch_earnings_calendar,
-    run,
-)
-from marketmind_ai.schemas import CompanyEventRecord
+_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
 
 
-def _make_event(**overrides) -> dict:
-    event = {
-        "symbol": "AAPL",
-        "date": "2026-08-15",
-        "hour": "amc",
-        "quarter": 3,
-        "year": 2026,
-        "epsEstimate": 1.5,
-        "epsActual": 1.6,
-        "revenueEstimate": 90_000_000,
-        "revenueActual": 91_000_000,
-    }
+def _event(symbol: str = "AAPL", **overrides) -> dict:
+    event = {"symbol": symbol, "date": "2026-09-10", "epsEstimate": 1.5, "hour": "amc", "quarter": 3, "year": 2026}
     event.update(overrides)
     return event
 
 
 class TestEventsToRecords:
-    """Filtra al solo universo — `/calendar/earnings` senza `symbol` restituisce
-    earnings di tutte le aziende, non solo quelle dell'universo."""
+    def test_mappa_i_campi_per_i_simboli_dellUniverso(self):
+        [record] = events_to_records([_event()], {"AAPL"}, _NOW)
 
-    def test_maps_fields_for_symbols_in_universe(self):
-        events = [_make_event(symbol="AAPL"), _make_event(symbol="MSFT", date="2026-08-16")]
+        assert record.symbol == "AAPL"
+        assert record.ts == date(2026, 9, 10)
+        assert record.event_type == "earnings"
+        assert record.source == "Finnhub"
+        assert record.raw_payload["epsEstimate"] == 1.5
 
-        records = _events_to_records(events, universe_symbols={"AAPL", "MSFT"})
+    def test_scarta_i_simboli_fuori_universo(self):
+        records = events_to_records([_event("AAPL"), _event("ZZZZ")], {"AAPL"}, _NOW)
 
-        assert len(records) == 2
-        assert all(isinstance(r, CompanyEventRecord) for r in records)
+        assert [r.symbol for r in records] == ["AAPL"]
 
-        aapl = next(r for r in records if r.symbol == "AAPL")
-        assert aapl.ts == date(2026, 8, 15)
-        assert aapl.event_type == "earnings"
-        assert aapl.source == "Finnhub"
-        assert aapl.raw_payload == _make_event(symbol="AAPL")
-
-    def test_filters_out_symbols_not_in_universe(self):
-        events = [_make_event(symbol="AAPL"), _make_event(symbol="NOTINUNIVERSE")]
-
-        records = _events_to_records(events, universe_symbols={"AAPL"})
-
-        assert len(records) == 1
-        assert records[0].symbol == "AAPL"
-
-    def test_empty_events_returns_empty_list(self):
-        records = _events_to_records([], universe_symbols={"AAPL"})
-
-        assert records == []
+    def test_nessun_evento(self):
+        assert events_to_records([], {"AAPL"}, _NOW) == []
 
 
-class TestFetchEarningsCalendarRetry:
-    def test_retries_and_eventually_succeeds(self, mocker):
-        expected_events = [_make_event()]
-        mock_response = mocker.Mock()
-        mock_response.json.return_value = {"earningsCalendar": expected_events}
-        mock_response.raise_for_status.return_value = None
+class TestPipeline:
+    def test_fetch_su_tutto_il_calendario_senza_symbol(self, mocker):
+        http = mocker.MagicMock(spec=HttpSource)
+        http.get_json.return_value = {"earningsCalendar": [_event()]}
 
-        mock_get = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.requests.get",
-            side_effect=[
-                requests.exceptions.ConnectionError("rete non raggiungibile"),
-                requests.exceptions.ConnectionError("rete non raggiungibile"),
-                mock_response,
-            ],
-        )
-        mocker.patch.object(
-            _fetch_earnings_calendar.retry, "sleep", lambda _seconds: None
-        )
+        events = FinnhubEarningsPipeline(db=None, http=http).fetch()
 
-        result = _fetch_earnings_calendar("fake-key", "2026-08-01", "2026-08-31")
+        assert events == [_event()]
+        path = http.get_json.call_args.args[0]
+        params = http.get_json.call_args.kwargs["params"]
+        assert path == "/calendar/earnings"
+        assert set(params) == {"from", "to"}
 
-        assert result == expected_events
-        assert mock_get.call_count == 3
+    def test_risposta_senza_calendario(self, mocker):
+        http = mocker.MagicMock(spec=HttpSource)
+        http.get_json.return_value = {}
 
-    def test_propagates_after_stop_after_attempt(self, mocker):
-        mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.requests.get",
-            side_effect=requests.exceptions.ConnectionError("rete non raggiungibile"),
-        )
-        mocker.patch.object(
-            _fetch_earnings_calendar.retry, "sleep", lambda _seconds: None
-        )
+        assert FinnhubEarningsPipeline(db=None, http=http).fetch() == []
 
-        with pytest.raises(requests.exceptions.ConnectionError):
-            _fetch_earnings_calendar("fake-key", "2026-08-01", "2026-08-31")
+    def test_parse_filtra_sullUniverso_letto_in_setup(self):
+        pipeline = FinnhubEarningsPipeline(db=None, http=None)
+        pipeline.universe = {"MSFT"}
 
-
-class TestRun:
-    def test_asset_not_found_for_one_symbol_does_not_block_the_others(self, mocker):
-        mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_api_key",
-            return_value="fake-key",
-        )
-        mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_universe_symbols",
-            return_value=["AAA", "BBB"],
-        )
-        mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline._fetch_earnings_calendar",
-            return_value=[_make_event(symbol="AAA"), _make_event(symbol="BBB")],
-        )
-
-        mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.get_session"
-        )
-        mock_get_session.return_value.__enter__.return_value = mock_session
-
-        mock_resolve_asset_id = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.resolve_asset_id",
-            side_effect=[AssetNotFoundError("AAA non trovato in t_assets"), 42],
-        )
-        mock_write_company_event = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.write_company_event"
-        )
-
-        tracker = mocker.Mock(rows_written=0)
-        mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.finnhub_earnings_pipeline.ingestion_run"
-        )
-        mock_ingestion_run.return_value.__enter__.return_value = tracker
-
-        run()
-
-        assert mock_resolve_asset_id.call_count == 2
-        assert mock_write_company_event.call_count == 1
-        args, _ = mock_write_company_event.call_args
-        assert args[1] == 42
-        assert tracker.rows_written == 1
+        assert [r.symbol for r in pipeline.parse([_event("AAPL"), _event("MSFT")])] == ["MSFT"]

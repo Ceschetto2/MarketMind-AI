@@ -1,97 +1,50 @@
-"""Test unitari per la logica pura di `yfinance_assets_pipeline.py`.
-
-Nessun accesso a rete/DB reale: `yfinance.Ticker` e lo strato di scrittura
-sono mockati con `pytest-mock`.
-"""
+"""Test unitari di `yfinance_assets_pipeline.py`: nessuna rete né DB."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
+from marketmind_pipelines.records import AssetRecord
+from marketmind_pipelines.yfinance_assets_pipeline import YFinanceAssetsPipeline, info_to_record
 
-from marketmind_ai.ingestion.yfinance_assets_pipeline import _fetch_info, _info_to_record, run
-from marketmind_ai.schemas import AssetRecord
+_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
 
 
-def _make_info(**overrides) -> dict:
-    info = {
-        "symbol": "AAPL",
-        "longName": "Apple Inc.",
-        "sector": "Technology",
-        "quoteType": "EQUITY",
-        "currentPrice": 320.0,  # campo non mappato, deve essere ignorato
-    }
+def _info(**overrides) -> dict:
+    info = {"symbol": "AAPL", "longName": "Apple Inc.", "sector": "Technology", "quoteType": "EQUITY"}
     info.update(overrides)
     return info
 
 
 class TestInfoToRecord:
-    def test_maps_fields_and_lowercases_asset_type(self):
-        record = _info_to_record(_make_info())
+    def test_mappa_campi_e_asset_type_minuscolo(self):
+        record = info_to_record(_info(), _NOW)
 
         assert isinstance(record, AssetRecord)
-        assert record.symbol == "AAPL"
-        assert record.name == "Apple Inc."
-        assert record.sector == "Technology"
+        assert (record.symbol, record.name, record.sector) == ("AAPL", "Apple Inc.", "Technology")
         assert record.asset_type == "equity"
         assert record.source == "yfinance"
 
-    def test_etf_has_no_sector(self):
-        """Un ETF come SPY non ha un settore GICS — `.info` lo restituisce
-        `None`/assente, va mappato a `None`, non a una stringa vuota."""
-        record = _info_to_record(
-            _make_info(symbol="SPY", longName="SPDR S&P 500 ETF Trust", sector=None, quoteType="ETF")
+    def test_etf_senza_settore(self):
+        """Un ETF come SPY non ha settore GICS: `None`, non stringa vuota."""
+        record = info_to_record(
+            _info(symbol="SPY", longName="SPDR S&P 500 ETF Trust", sector=None, quoteType="ETF"), _NOW
         )
 
         assert record.sector is None
         assert record.asset_type == "etf"
 
 
-class TestRun:
-    def test_asset_not_found_is_impossible_here_but_fetch_failure_does_not_block_others(
-        self, mocker
-    ):
-        """A differenza delle altre pipeline, qui non c'è `AssetNotFoundError`
-        da gestire (questa pipeline *crea* l'anagrafica, non la presuppone) —
-        il caso da testare è un fetch fallito per un ticker che non deve
-        bloccare gli altri."""
-        mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.get_universe_symbols",
-            return_value=["AAA", "BBB"],
-        )
-        mocker.patch("marketmind_ai.ingestion.yfinance_assets_pipeline.time.sleep")
-        mocker.patch.object(_fetch_info.retry, "sleep", lambda _seconds: None)
+class TestPipeline:
+    def test_extract_legge_info(self, mocker):
+        ticker = mocker.patch("marketmind_pipelines.yfinance_assets_pipeline.yf.Ticker")
+        ticker.return_value.info = _info()
 
-        ticker_bbb = mocker.Mock(info=_make_info(symbol="BBB"))
+        raw = YFinanceAssetsPipeline(db=None, symbols=["AAPL"], sleep=lambda _: None).extract("AAPL")
 
-        def ticker_side_effect(symbol):
-            if symbol == "AAA":
-                raise Exception("fetch fallito")
-            return ticker_bbb
+        assert raw["longName"] == "Apple Inc."
 
-        mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.yf.Ticker",
-            side_effect=ticker_side_effect,
-        )
+    def test_transform_un_record_per_ticker(self):
+        records = YFinanceAssetsPipeline(db=None, symbols=["AAPL"]).transform("AAPL", _info())
 
-        mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.get_session"
-        )
-        mock_get_session.return_value.__enter__.return_value = mock_session
-
-        mock_upsert_asset = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.upsert_asset"
-        )
-
-        tracker = mocker.Mock(rows_written=0)
-        mock_ingestion_run = mocker.patch(
-            "marketmind_ai.ingestion.yfinance_assets_pipeline.ingestion_run"
-        )
-        mock_ingestion_run.return_value.__enter__.return_value = tracker
-
-        run()
-
-        assert mock_upsert_asset.call_count == 1
-        assert tracker.rows_written == 1
+        assert [r.symbol for r in records] == ["AAPL"]

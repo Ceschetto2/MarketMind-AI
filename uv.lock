@@ -7,6 +7,16 @@ resolution-markers = [
     "sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "marketmind",
+    "marketmind-common",
+    "marketmind-db",
+    "marketmind-frontend",
+    "marketmind-llm-decision-engine",
+    "marketmind-pipelines",
+]
+
 [[package]]
 name = "alembic"
 version = "1.19.1"
@@ -835,22 +845,15 @@ wheels = [
 ]
 
 [[package]]
-name = "marketmind-ai"
+name = "marketmind"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
-    { name = "alembic" },
-    { name = "google-genai" },
-    { name = "plotly" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "requests" },
-    { name = "sqlalchemy" },
-    { name = "streamlit" },
-    { name = "tenacity" },
-    { name = "vectorbt" },
-    { name = "yfinance" },
+    { name = "marketmind-common" },
+    { name = "marketmind-db" },
+    { name = "marketmind-frontend" },
+    { name = "marketmind-llm-decision-engine" },
+    { name = "marketmind-pipelines" },
 ]
 
 [package.dev-dependencies]
@@ -861,24 +864,124 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.19.1" },
-    { name = "google-genai", specifier = ">=2.23.0" },
-    { name = "plotly", specifier = "<6" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
-    { name = "pydantic", specifier = ">=2.13.5" },
-    { name = "python-dotenv", specifier = ">=1.2.3" },
-    { name = "requests", specifier = ">=2.34.2" },
-    { name = "sqlalchemy", specifier = ">=2.0.52" },
-    { name = "streamlit", specifier = ">=1.63.0" },
-    { name = "tenacity", specifier = ">=9.1.4" },
-    { name = "vectorbt", specifier = ">=1.1.0" },
-    { name = "yfinance", specifier = ">=1.7.0" },
+    { name = "marketmind-common", editable = "packages/marketmind_common" },
+    { name = "marketmind-db", editable = "packages/marketmind_db" },
+    { name = "marketmind-frontend", editable = "packages/marketmind_frontend" },
+    { name = "marketmind-llm-decision-engine", editable = "packages/marketmind_llm_decision_engine" },
+    { name = "marketmind-pipelines", editable = "packages/marketmind_pipelines" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-mock", specifier = ">=3.15.1" },
+]
+
+[[package]]
+name = "marketmind-common"
+version = "0.1.0"
+source = { editable = "packages/marketmind_common" }
+dependencies = [
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "python-dotenv", specifier = ">=1.2.3" }]
+
+[[package]]
+name = "marketmind-db"
+version = "0.1.0"
+source = { editable = "packages/marketmind_db" }
+dependencies = [
+    { name = "alembic" },
+    { name = "marketmind-common" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.19.1" },
+    { name = "marketmind-common", editable = "packages/marketmind_common" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
+    { name = "sqlalchemy", specifier = ">=2.0.52" },
+]
+
+[[package]]
+name = "marketmind-frontend"
+version = "0.1.0"
+source = { editable = "packages/marketmind_frontend" }
+dependencies = [
+    { name = "marketmind-common" },
+    { name = "marketmind-db" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "sqlalchemy" },
+    { name = "streamlit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "marketmind-common", editable = "packages/marketmind_common" },
+    { name = "marketmind-db", editable = "packages/marketmind_db" },
+    { name = "pandas" },
+    { name = "plotly", specifier = "<6" },
+    { name = "sqlalchemy", specifier = ">=2.0.52" },
+    { name = "streamlit", specifier = ">=1.63.0" },
+]
+
+[[package]]
+name = "marketmind-llm-decision-engine"
+version = "0.1.0"
+source = { editable = "packages/marketmind_llm_decision_engine" }
+dependencies = [
+    { name = "google-genai" },
+    { name = "marketmind-common" },
+    { name = "marketmind-db" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+    { name = "tenacity" },
+    { name = "vectorbt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-genai", specifier = ">=2.23.0" },
+    { name = "marketmind-common", editable = "packages/marketmind_common" },
+    { name = "marketmind-db", editable = "packages/marketmind_db" },
+    { name = "pandas" },
+    { name = "plotly", specifier = "<6" },
+    { name = "pydantic", specifier = ">=2.13.5" },
+    { name = "sqlalchemy", specifier = ">=2.0.52" },
+    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "vectorbt", specifier = ">=1.1.0" },
+]
+
+[[package]]
+name = "marketmind-pipelines"
+version = "0.1.0"
+source = { editable = "packages/marketmind_pipelines" }
+dependencies = [
+    { name = "marketmind-common" },
+    { name = "marketmind-db" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "sqlalchemy" },
+    { name = "tenacity" },
+    { name = "yfinance" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "marketmind-common", editable = "packages/marketmind_common" },
+    { name = "marketmind-db", editable = "packages/marketmind_db" },
+    { name = "pydantic", specifier = ">=2.13.5" },
+    { name = "requests", specifier = ">=2.34.2" },
+    { name = "sqlalchemy", specifier = ">=2.0.52" },
+    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "yfinance", specifier = ">=1.7.0" },
 ]
 
 [[package]]

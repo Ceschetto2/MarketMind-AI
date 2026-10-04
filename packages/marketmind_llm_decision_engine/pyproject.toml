@@ -1,0 +1,40 @@
+[project]
+name = "marketmind-llm-decision-engine"
+version = "0.1.0"
+description = "Decision Engine LLM, orchestrazione dei rinvii e backtest."
+requires-python = "==3.14.*"
+dependencies = [
+    "marketmind-common",
+    "marketmind-db",
+    "google-genai>=2.23.0",
+    "pandas",
+    "plotly<6",
+    "pydantic>=2.13.5",
+    "sqlalchemy>=2.0.52",
+    "tenacity>=9.1.4",
+    "vectorbt>=1.1.0",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+# Il codice sta direttamente in `src/`, senza la cartella `src/marketmind_llm_decision_engine/`
+# in mezzo: `package-dir` fa corrispondere il nome di import `marketmind_llm_decision_engine` a
+# `src/`. Va elencato ogni sottopacchetto (una cartella con `__init__.py`),
+# perché l'auto-discovery di setuptools ricaverebbe i nomi dalle cartelle
+# (`src.models`), non dal nome di import.
+[tool.setuptools]
+package-dir = { "marketmind_llm_decision_engine" = "src" }
+packages = [
+    "marketmind_llm_decision_engine",
+    "marketmind_llm_decision_engine.backtest",
+    "marketmind_llm_decision_engine.decision_engine",
+    "marketmind_llm_decision_engine.llm",
+    "marketmind_llm_decision_engine.orchestration",
+    "marketmind_llm_decision_engine.repositories",
+]
+
+[tool.uv.sources]
+marketmind-common = { workspace = true }
+marketmind-db = { workspace = true }

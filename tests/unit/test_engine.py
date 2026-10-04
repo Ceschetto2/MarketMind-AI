@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from marketmind_ai.decision_engine.engine import (
+from marketmind_llm_decision_engine.decision_engine.engine import (
     DEFAULT_DECISION_INTERVAL,
     initialize_portfolio,
     run_due_decisions,
 )
-from marketmind_ai.llm.exceptions import DecisionError
-from marketmind_ai.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
 AS_OF = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
 
@@ -48,35 +48,35 @@ def _mock_context(mocker, asset_id, symbol, close=100.0):
 
 def _patch_common(mocker, portfolios, watchlist, providers=None):
     mock_session = mocker.MagicMock(name="session")
-    mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+    mock_get_session = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.get_session")
     mock_get_session.return_value.__enter__.return_value = mock_session
 
     mocker.patch(
-        "marketmind_ai.decision_engine.engine.get_due_model_portfolios",
+        "marketmind_llm_decision_engine.decision_engine.engine.get_due_model_portfolios",
         return_value=portfolios,
     )
     mocker.patch(
-        "marketmind_ai.decision_engine.engine.get_watchlist", return_value=watchlist
+        "marketmind_llm_decision_engine.decision_engine.engine.get_watchlist", return_value=watchlist
     )
-    mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
+    mock_build_context = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.build_context")
     mock_build_context.side_effect = (
         lambda session, asset_id, symbol, portfolio_id, as_of: _mock_context(
             mocker, asset_id, symbol
         )
     )
     mock_create_run = mocker.patch(
-        "marketmind_ai.decision_engine.engine.create_model_run", return_value=1
+        "marketmind_llm_decision_engine.decision_engine.engine.create_model_run", return_value=1
     )
     mock_write_decision = mocker.patch(
-        "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
+        "marketmind_llm_decision_engine.decision_engine.engine.write_model_decision", return_value=99
     )
     mock_get_provider = mocker.patch(
-        "marketmind_ai.decision_engine.engine.get_provider",
+        "marketmind_llm_decision_engine.decision_engine.engine.get_provider",
         side_effect=providers if providers is not None else [mocker.Mock()] * 10,
     )
-    mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+    mock_execute_trade = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.execute_trade")
     mock_schedule_next = mocker.patch(
-        "marketmind_ai.decision_engine.engine.schedule_next_decision"
+        "marketmind_llm_decision_engine.decision_engine.engine.schedule_next_decision"
     )
     return (
         mock_create_run,
@@ -217,7 +217,7 @@ class TestRunDueDecisions:
         )
         mock_create_run.return_value = 77
         mock_track_model_run = mocker.patch(
-            "marketmind_ai.decision_engine.engine.track_model_run"
+            "marketmind_llm_decision_engine.decision_engine.engine.track_model_run"
         )
 
         run_due_decisions(as_of=AS_OF)
@@ -339,25 +339,25 @@ class TestTradeExecution:
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="BUY", size_pct=0.2)
         mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+        mock_get_session = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_due_model_portfolios",
+            "marketmind_llm_decision_engine.decision_engine.engine.get_due_model_portfolios",
             return_value=portfolios,
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_watchlist", return_value=watchlist
+            "marketmind_llm_decision_engine.decision_engine.engine.get_watchlist", return_value=watchlist
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.build_context",
+            "marketmind_llm_decision_engine.decision_engine.engine.build_context",
             return_value=_mock_context(mocker, 1, "AAPL", close=142.5),
         )
-        mocker.patch("marketmind_ai.decision_engine.engine.create_model_run", return_value=1)
-        mocker.patch("marketmind_ai.decision_engine.engine.write_model_decision", return_value=99)
+        mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.create_model_run", return_value=1)
+        mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.write_model_decision", return_value=99)
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
+            "marketmind_llm_decision_engine.decision_engine.engine.get_provider", return_value=provider
         )
-        mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+        mock_execute_trade = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.execute_trade")
 
         run_due_decisions(as_of=AS_OF)
 
@@ -370,27 +370,27 @@ class TestTradeExecution:
         provider = mocker.Mock()
         provider.decide.return_value = Decision(decision="BUY", size_pct=0.2)
         mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+        mock_get_session = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_due_model_portfolios",
+            "marketmind_llm_decision_engine.decision_engine.engine.get_due_model_portfolios",
             return_value=portfolios,
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_watchlist", return_value=watchlist
+            "marketmind_llm_decision_engine.decision_engine.engine.get_watchlist", return_value=watchlist
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.build_context",
+            "marketmind_llm_decision_engine.decision_engine.engine.build_context",
             return_value=_mock_context(mocker, 1, "AAPL", close=None),
         )
-        mocker.patch("marketmind_ai.decision_engine.engine.create_model_run", return_value=1)
+        mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.create_model_run", return_value=1)
         mock_write_decision = mocker.patch(
-            "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
+            "marketmind_llm_decision_engine.decision_engine.engine.write_model_decision", return_value=99
         )
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
+            "marketmind_llm_decision_engine.decision_engine.engine.get_provider", return_value=provider
         )
-        mock_execute_trade = mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+        mock_execute_trade = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.execute_trade")
 
         run_due_decisions(as_of=AS_OF)
 
@@ -407,19 +407,19 @@ class TestInitializePortfolio:
 
     def _patch(self, mocker, universe, selection_symbols, reasoning=None, decide_return=None):
         mock_session = mocker.MagicMock(name="session")
-        mock_get_session = mocker.patch("marketmind_ai.decision_engine.engine.get_session")
+        mock_get_session = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.get_session")
         mock_get_session.return_value.__enter__.return_value = mock_session
 
         portfolio = mocker.Mock(portfolio_id=7, llm_provider="gemini", model_version="v1")
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_portfolio", return_value=portfolio
+            "marketmind_llm_decision_engine.decision_engine.engine.get_portfolio", return_value=portfolio
         )
         mock_build_bootstrap_context = mocker.patch(
-            "marketmind_ai.decision_engine.engine.build_bootstrap_context"
+            "marketmind_llm_decision_engine.decision_engine.engine.build_bootstrap_context"
         )
         mock_build_bootstrap_context.return_value.model_dump.return_value = {"universe": []}
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_decision_universe", return_value=universe
+            "marketmind_llm_decision_engine.decision_engine.engine.get_decision_universe", return_value=universe
         )
         provider = mocker.Mock()
         provider.select_watchlist.return_value = WatchlistSelection(
@@ -427,26 +427,26 @@ class TestInitializePortfolio:
         )
         provider.decide.return_value = decide_return or Decision(decision="HOLD")
         mocker.patch(
-            "marketmind_ai.decision_engine.engine.get_provider", return_value=provider
+            "marketmind_llm_decision_engine.decision_engine.engine.get_provider", return_value=provider
         )
         mock_write_watchlist = mocker.patch(
-            "marketmind_ai.decision_engine.engine.write_watchlist"
+            "marketmind_llm_decision_engine.decision_engine.engine.write_watchlist"
         )
-        mock_build_context = mocker.patch("marketmind_ai.decision_engine.engine.build_context")
+        mock_build_context = mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.build_context")
         mock_build_context.side_effect = (
             lambda session, asset_id, symbol, portfolio_id, as_of: _mock_context(
                 mocker, asset_id, symbol
             )
         )
         mock_create_run = mocker.patch(
-            "marketmind_ai.decision_engine.engine.create_model_run", return_value=1
+            "marketmind_llm_decision_engine.decision_engine.engine.create_model_run", return_value=1
         )
         mock_write_decision = mocker.patch(
-            "marketmind_ai.decision_engine.engine.write_model_decision", return_value=99
+            "marketmind_llm_decision_engine.decision_engine.engine.write_model_decision", return_value=99
         )
-        mocker.patch("marketmind_ai.decision_engine.engine.execute_trade")
+        mocker.patch("marketmind_llm_decision_engine.decision_engine.engine.execute_trade")
         mock_schedule_next = mocker.patch(
-            "marketmind_ai.decision_engine.engine.schedule_next_decision"
+            "marketmind_llm_decision_engine.decision_engine.engine.schedule_next_decision"
         )
         return (
             provider,

@@ -22,7 +22,9 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from marketmind_ai.db.session import get_engine
+from marketmind_db.access import INGESTION
+from marketmind_db.database import Database, DatabaseSettings
+from marketmind_db.session import get_engine
 
 
 @pytest.fixture(scope="session")
@@ -49,5 +51,24 @@ def db_session(_db_reachable: bool):
     yield session
 
     session.close()
+    transaction.rollback()
+    connection.close()
+
+
+@pytest.fixture
+def rollback_db(_db_reachable: bool):
+    """`Database` (policy `INGESTION`) legato a una connessione con una
+    transazione esterna sempre annullata a fine test: anche i `commit()` di
+    `Database.session()`/`transaction()` — e quindi di sink, pipeline e
+    `IngestionRunAudit` — diventano `SAVEPOINT`. Il codice sotto test scrive
+    per davvero su Postgres, ma nulla resta nel DB a fine test: nessuna
+    pulizia esplicita, nessun dato di prova che sopravvive a un test
+    fallito a metà."""
+    if not _db_reachable:
+        pytest.skip("Postgres non raggiungibile (marketmind-db) — vedi .env")
+
+    connection = get_engine().connect()
+    transaction = connection.begin()
+    yield Database(DatabaseSettings(url=str(get_engine().url)), policy=INGESTION, bind=connection)
     transaction.rollback()
     connection.close()

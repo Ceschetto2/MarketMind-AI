@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
-from marketmind_ai.db.decision_writer import create_model_run, write_model_decision
-from marketmind_ai.db.models.decisions import ModelDecision, ModelRun
-from marketmind_ai.db.models.market_data import Asset
-from marketmind_ai.db.models.portfolio import Portfolio
-from marketmind_ai.llm.schemas import Decision
+from marketmind_llm_decision_engine.repositories.decision_writer import create_model_run, write_model_decision
+from marketmind_db.models.decisions import ModelDecision, ModelRun
+from marketmind_db.models.market_data import Asset
+from marketmind_db.models.portfolio import Portfolio
+from marketmind_llm_decision_engine.llm.schemas import Decision
 
 pytestmark = pytest.mark.integration
 

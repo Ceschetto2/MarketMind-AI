@@ -1,32 +1,32 @@
-"""Test unitari per la logica pura di `fmp_pipeline.py`.
-
-Nessun accesso a rete/DB reale: `requests.get`, `get_api_key`, `get_session`
-e lo strato di scrittura sono mockati con `pytest-mock`.
-"""
+"""Test unitari di `fmp_pipeline.py`: `HttpSource` è un mock."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
 import pytest
-import requests
 
-from marketmind_ai.ingestion.fmp_pipeline import (
+from marketmind_pipelines.fmp_pipeline import (
     ENDPOINTS,
     SOURCE,
-    _fetch_endpoint,
-    _latest_record,
-    _statements_to_record,
+    FmpPipeline,
+    latest_record,
+    statement_to_record,
 )
-from marketmind_ai.schemas import CompanyEventRecord
+from marketmind_pipelines.http import HttpSource
+from marketmind_pipelines.records import CompanyEventRecord
+
+_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
 
 
-def _make_statement(**overrides) -> dict:
+def _statement(**overrides) -> dict:
     statement = {
         "date": "2026-06-30",
         "symbol": "AAPL",
         "reportedCurrency": "USD",
         "cik": "0000320193",
+        "filingDate": "2026-08-01",
+        "acceptedDate": "2026-08-01 18:04:12",
         "fiscalYear": "2026",
         "period": "Q3",
         "revenue": 90_000_000_000,
@@ -36,88 +36,86 @@ def _make_statement(**overrides) -> dict:
 
 
 class TestLatestRecord:
-    """Nessun backfill storico profondo (principio generale del progetto):
-    di ogni endpoint (che restituisce fino a 5 anni in una sola chiamata) si
-    scrive solo il record più recente per `date`, non l'intero storico."""
+    """Nessun backfill storico profondo: di ogni endpoint (fino a 5 anni per
+    chiamata) si scrive solo il record più recente per `date`."""
 
-    def test_returns_most_recent_by_date(self):
-        statements = [
-            _make_statement(date="2025-06-30"),
-            _make_statement(date="2026-06-30"),
-            _make_statement(date="2024-06-30"),
-        ]
+    def test_il_piu_recente_per_data(self):
+        statements = [_statement(date="2025-06-30"), _statement(date="2026-06-30"), _statement(date="2024-06-30")]
 
-        latest = _latest_record(statements)
+        assert latest_record(statements)["date"] == "2026-06-30"
 
-        assert latest["date"] == "2026-06-30"
-
-    def test_empty_list_returns_none(self):
-        assert _latest_record([]) is None
+    def test_lista_vuota(self):
+        assert latest_record([]) is None
 
 
-class TestStatementsToRecord:
+class TestStatementToRecord:
     @pytest.mark.parametrize(
-        ("endpoint_key", "expected_event_type"),
+        ("endpoint", "event_type"),
         [
-            ("income-statement", "earnings"),
-            ("balance-sheet-statement", "earnings"),
-            ("cash-flow-statement", "earnings"),
+            ("income-statement", "income_statement"),
+            ("balance-sheet-statement", "balance_sheet"),
+            ("cash-flow-statement", "cash_flow"),
             ("dividends", "dividend"),
             ("splits", "split"),
         ],
     )
-    def test_maps_endpoint_to_event_type(self, endpoint_key, expected_event_type):
-        statement = _make_statement()
+    def test_endpoint_mappato_sul_proprio_event_type(self, endpoint, event_type):
+        """Migrazione `0009`: i tre bilanci non sono più tutti `earnings`."""
+        statement = _statement()
 
-        record = _statements_to_record("AAPL", endpoint_key, statement)
+        record = statement_to_record("AAPL", endpoint, statement, _NOW)
 
         assert isinstance(record, CompanyEventRecord)
-        assert record.symbol == "AAPL"
-        assert record.ts == date(2026, 6, 30)
-        assert record.event_type == expected_event_type
+        assert (record.symbol, record.ts, record.event_type) == ("AAPL", date(2026, 6, 30), event_type)
         assert record.source == SOURCE
         assert record.raw_payload == statement
 
+    def test_colonne_identificative_dei_bilanci(self):
+        """Migrazione `0008`; `acceptedDate` porta anche l'orario."""
+        record = statement_to_record("AAPL", "income-statement", _statement(), _NOW)
 
-class TestFetchEndpointRetry:
-    def test_retries_and_eventually_succeeds(self, mocker):
-        expected = [_make_statement()]
-        mock_response = mocker.Mock()
-        mock_response.json.return_value = expected
-        mock_response.raise_for_status.return_value = None
-
-        mock_get = mocker.patch(
-            "marketmind_ai.ingestion.fmp_pipeline.requests.get",
-            side_effect=[
-                requests.exceptions.ConnectionError("rete non raggiungibile"),
-                requests.exceptions.ConnectionError("rete non raggiungibile"),
-                mock_response,
-            ],
+        assert (record.fiscal_year, record.period, record.reported_currency, record.cik) == (
+            "2026", "Q3", "USD", "0000320193",
         )
-        mocker.patch.object(_fetch_endpoint.retry, "sleep", lambda _seconds: None)
+        assert (record.filing_date, record.accepted_date) == (date(2026, 8, 1), date(2026, 8, 1))
 
-        result = _fetch_endpoint("income-statement", "AAPL", "fake-key")
+    def test_dividendo_senza_colonne_identificative(self):
+        record = statement_to_record("AAPL", "dividends", {"date": "2026-08-10", "dividend": 0.26}, _NOW)
 
-        assert result == expected
-        assert mock_get.call_count == 3
+        assert record.fiscal_year is None and record.filing_date is None
 
-    def test_propagates_after_stop_after_attempt(self, mocker):
-        mocker.patch(
-            "marketmind_ai.ingestion.fmp_pipeline.requests.get",
-            side_effect=requests.exceptions.ConnectionError("rete non raggiungibile"),
+
+class TestPipeline:
+    def test_cinque_endpoint(self):
+        assert len(ENDPOINTS) == 5
+
+    def test_un_target_per_coppia_ticker_endpoint(self):
+        """Un endpoint fuori piano (402) fallisce da solo, senza perdere gli
+        altri quattro dello stesso ticker."""
+        targets = FmpPipeline(db=None, http=None, symbols=["AAPL", "MSFT"]).targets()
+
+        assert len(targets) == 10
+        assert targets[:2] == [("AAPL", "income-statement"), ("AAPL", "balance-sheet-statement")]
+
+    def test_extract_chiama_lendpoint_del_target(self, mocker):
+        http = mocker.MagicMock(spec=HttpSource)
+        http.get_json.return_value = []
+
+        FmpPipeline(db=None, http=http, symbols=["AAPL"]).extract(("AAPL", "dividends"))
+
+        http.get_json.assert_called_once_with("/dividends", params={"symbol": "AAPL"})
+
+    def test_transform_solo_il_record_piu_recente(self):
+        pipeline = FmpPipeline(db=None, http=None, symbols=["AAPL"])
+
+        records = pipeline.transform(
+            ("AAPL", "income-statement"), [_statement(date="2025-06-30"), _statement(date="2026-06-30")]
         )
-        mocker.patch.object(_fetch_endpoint.retry, "sleep", lambda _seconds: None)
 
-        with pytest.raises(requests.exceptions.ConnectionError):
-            _fetch_endpoint("income-statement", "AAPL", "fake-key")
+        assert [r.ts for r in records] == [date(2026, 6, 30)]
 
+    def test_transform_endpoint_vuoto(self):
+        assert FmpPipeline(db=None, http=None).transform(("AAPL", "splits"), []) == []
 
-class TestEndpointsConstant:
-    def test_five_endpoints_mapped(self):
-        assert set(ENDPOINTS) == {
-            "income-statement",
-            "balance-sheet-statement",
-            "cash-flow-statement",
-            "dividends",
-            "splits",
-        }
+    def test_descrizione_del_target(self):
+        assert FmpPipeline(db=None, http=None).describe_target(("AAPL", "splits")) == "AAPL/splits"

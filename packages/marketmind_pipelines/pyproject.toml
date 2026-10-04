@@ -1,0 +1,36 @@
+[project]
+name = "marketmind-pipelines"
+version = "0.1.0"
+description = "Pipeline di ingestion delle fonti dati di mercato."
+requires-python = "==3.14.*"
+dependencies = [
+    "marketmind-common",
+    "marketmind-db",
+    "pydantic>=2.13.5",
+    "requests>=2.34.2",
+    "sqlalchemy>=2.0.52",
+    "tenacity>=9.1.4",
+    "yfinance>=1.7.0",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+# Il codice sta direttamente in `src/`, senza la cartella `src/marketmind_pipelines/`
+# in mezzo: `package-dir` fa corrispondere il nome di import `marketmind_pipelines` a
+# `src/`. Va elencato ogni sottopacchetto (una cartella con `__init__.py`),
+# perché l'auto-discovery di setuptools ricaverebbe i nomi dalle cartelle
+# (`src.models`), non dal nome di import.
+[tool.setuptools]
+package-dir = { "marketmind_pipelines" = "src" }
+packages = [
+    "marketmind_pipelines",
+]
+
+[tool.setuptools.package-data]
+marketmind_pipelines = ["seeds/*.csv"]
+
+[tool.uv.sources]
+marketmind-common = { workspace = true }
+marketmind-db = { workspace = true }

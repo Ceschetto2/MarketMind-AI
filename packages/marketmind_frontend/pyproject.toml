@@ -1,0 +1,32 @@
+[project]
+name = "marketmind-frontend"
+version = "0.1.0"
+description = "Dashboard Streamlit in sola lettura sui portfolio."
+requires-python = "==3.14.*"
+dependencies = [
+    "marketmind-common",
+    "marketmind-db",
+    "pandas",
+    "plotly<6",
+    "sqlalchemy>=2.0.52",
+    "streamlit>=1.63.0",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+# Il codice sta direttamente in `src/`, senza la cartella `src/marketmind_frontend/`
+# in mezzo: `package-dir` fa corrispondere il nome di import `marketmind_frontend` a
+# `src/`. Va elencato ogni sottopacchetto (una cartella con `__init__.py`),
+# perché l'auto-discovery di setuptools ricaverebbe i nomi dalle cartelle
+# (`src.models`), non dal nome di import.
+[tool.setuptools]
+package-dir = { "marketmind_frontend" = "src" }
+packages = [
+    "marketmind_frontend",
+]
+
+[tool.uv.sources]
+marketmind-common = { workspace = true }
+marketmind-db = { workspace = true }

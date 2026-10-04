@@ -1,0 +1,19 @@
+# Contesto di build delle immagini in deploy/images/ (podman legge anche
+# .dockerignore). Fuori: segreti, ambienti locali, artefatti di build e
+# tutto ciò che non serve a nessuna immagine.
+.env
+.env.*
+!.env.example
+.git
+.claude
+.venv
+**/__pycache__
+**/*.pyc
+packages/*/build
+packages/*/*.egg-info
+packages/*/src/*.egg-info
+dist
+data
+db_backup
+experiments
+tests

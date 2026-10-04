@@ -1,0 +1,32 @@
+# Quadlet Podman rootless per la pipeline di ingestion `universe-csv` —
+# seed della lista di ticker dell'universo osservato da `seeds/universe.csv`
+# (nel repository, non un'API esterna). Stesso pattern one-shot delle altre
+# pipeline, sulla stessa immagine delle pipeline `marketmind-pipelines`.
+#
+# Cadenza diversa dalle altre: manuale (`deploy.sh --trigger universe-csv`,
+# quando il CSV viene aggiornato) più un timer mensile di sicurezza
+# (`marketmind-ingest-universe-csv.timer`), non oraria/giornaliera — vedi
+# `Market Mind AI - Docs/pipelines/01_trigger_e_scheduling.md`.
+
+[Unit]
+Description=MarketMind AI — ingestion universe-csv (seed lista ticker)
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
+
+[Container]
+Image=localhost/marketmind-pipelines:latest
+ContainerName=marketmind-ingest-universe-csv
+Network=marketmind.network
+Exec=run universe-csv
+Secret=marketmind-ingestion-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_ingestion
+
+[Service]
+Type=oneshot
+
+[Install]
+WantedBy=default.target

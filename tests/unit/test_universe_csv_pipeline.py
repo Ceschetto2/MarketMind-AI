@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from marketmind_ai.ingestion.universe_csv_pipeline import read_universe_csv
-from marketmind_ai.schemas import UniverseMemberRecord
+from marketmind_pipelines.universe_csv_pipeline import read_universe_csv
+from marketmind_pipelines.records import UniverseMemberRecord
 
 CSV_HEADER = "symbol,name,sector,asset_type,is_benchmark\n"
 
