@@ -1,40 +1,26 @@
 """Pipeline `universe-csv`: seed della lista di ticker dell'universo osservato.
 
-Entry point standalone, invocato dal container Quadlet
-`marketmind-ingest-universe-csv.container` (`Exec=python -m
-marketmind_pipelines.universe_csv_pipeline`) — a differenza delle altre
-pipeline, a cadenza manuale (`deploy.sh --trigger universe-csv`) più un
-timer mensile di sicurezza, non oraria/giornaliera: vedi `Market Mind AI -
-Docs/pipelines/01_trigger_e_scheduling.md`.
+Cadenza manuale (`deploy.sh --trigger universe-csv`) più un timer mensile
+di sicurezza. L'unica pipeline la cui fonte è un file del repository
+(`seeds/universe.csv`, dentro il pacchetto così che viaggi con la wheel
+dell'immagine), non un'API esterna, e l'unica che può creare righe in
+`t_assets` (`UniverseMemberRecord` è l'unica interfaccia con `asset_type`).
 
-L'unica pipeline la cui fonte è un file nel repository
-(`marketmind_pipelines/seeds/universe.csv`),
-non un'API esterna: legge il CSV, valida ogni riga come
-`UniverseMemberRecord` e la scrive con `resolve_or_create_asset` (crea la
-riga in `t_assets` se manca — l'unica pipeline che può farlo, dato che è
-l'unica interfaccia con `asset_type`) + `upsert_universe_member`.
+Un CSV malformato fa fallire l'intero run: è un errore da correggere alla
+fonte, non un dato da scartare riga per riga.
 """
 
 from __future__ import annotations
 
 import csv
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from marketmind_db.session import get_session
-from marketmind_db.writer import ingestion_run, resolve_or_create_asset, upsert_universe_member
-from marketmind_db.schemas import UniverseMemberRecord
-from marketmind_common.logging_config import configure_logging
-
-logger = logging.getLogger(__name__)
+from marketmind_pipelines.base import BulkPipeline
+from marketmind_pipelines.records import UniverseMemberRecord
+from marketmind_pipelines.sinks import UniverseMemberSink
 
 SOURCE = "universe-csv"
-TARGET_TABLE = "market_data.t_universe_members"
-
-# Il CSV vive dentro il pacchetto (`marketmind_pipelines/seeds/`), quindi
-# viaggia con la wheel installata nell'immagine invece di essere copiato a
-# parte nel Containerfile.
 DEFAULT_CSV_PATH = Path(__file__).resolve().parent / "seeds" / "universe.csv"
 
 _TRUE_VALUES = {"true", "1", "yes"}
@@ -87,20 +73,24 @@ def read_universe_csv(path: Path) -> list[UniverseMemberRecord]:
     return records
 
 
-def run(csv_path: Path = DEFAULT_CSV_PATH) -> None:
-    records = read_universe_csv(csv_path)
-    logger.info("letti %d ticker da %s", len(records), csv_path)
+class UniverseCsvPipeline(BulkPipeline[list[UniverseMemberRecord], UniverseMemberRecord]):
+    name = "universe-csv"
+    audit_source = "universe-csv"
+    target_table = "market_data.t_universe_members"
+    sink = UniverseMemberSink
 
-    with ingestion_run(SOURCE, TARGET_TABLE) as tracker:
-        with get_session() as session:
-            for record in records:
-                asset_id = resolve_or_create_asset(session, record)
-                upsert_universe_member(session, asset_id, record)
-                tracker.rows_written += 1
+    def __init__(self, db, *, csv_path: Path = DEFAULT_CSV_PATH) -> None:
+        super().__init__(db)
+        self.csv_path = csv_path
 
-    logger.info("completato: %d righe scritte", tracker.rows_written)
+    def setup(self) -> None:
+        # Letto qui, fuori dai target: un CSV malformato o assente non è un
+        # target fallito ma un errore di configurazione — il run fallisce e
+        # l'eccezione viene rilanciata.
+        self.records = read_universe_csv(self.csv_path)
 
+    def fetch(self) -> list[UniverseMemberRecord]:
+        return self.records
 
-if __name__ == "__main__":
-    configure_logging()
-    run()
+    def parse(self, raw: list[UniverseMemberRecord]) -> list[UniverseMemberRecord]:
+        return raw

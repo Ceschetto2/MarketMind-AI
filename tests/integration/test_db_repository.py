@@ -2,7 +2,7 @@
 (`Database`, `TableRepository`, `IngestionRunAudit`) contro Postgres reale.
 
 Tutto gira dentro una transazione esterna sempre annullata a fine test
-(fixture `db`, stesso meccanismo di `db_session` in `conftest.py`): anche i
+(fixture `rollback_db` in `conftest.py`): anche i
 `commit()` di `Database.session()` diventano `SAVEPOINT`, nessun dato di
 prova resta nel DB — nemmeno l'asset sintetico `TESTREPO`.
 """
@@ -21,7 +21,6 @@ from marketmind_db.database import Database, DatabaseSettings
 from marketmind_db.models.audit import AuditLog, IngestionRun
 from marketmind_db.models.market_data import Asset, CompanyEvent, MacroEvent, MarketPrice, NewsEvent
 from marketmind_db.models.raw import NewsEventRaw
-from marketmind_db.session import get_engine
 
 pytestmark = pytest.mark.integration
 
@@ -30,17 +29,8 @@ _NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 @pytest.fixture
-def db(_db_reachable: bool):
-    if not _db_reachable:
-        pytest.skip("Postgres non raggiungibile (marketmind-db) — vedi .env")
-
-    connection = get_engine().connect()
-    transaction = connection.begin()
-    yield Database(
-        DatabaseSettings(url=str(get_engine().url)), policy=INGESTION, bind=connection
-    )
-    transaction.rollback()
-    connection.close()
+def db(rollback_db: Database) -> Database:
+    return rollback_db
 
 
 @pytest.fixture
@@ -203,10 +193,30 @@ class TestDatabase:
             with slow.session() as session:
                 session.execute(text("SELECT pg_sleep(0.5)"))
 
+    def test_dry_run_audit_e_dati_coerenti_poi_annullati(self, db, asset_id):
+        """Il caso trovato col primo `--dry-run` reale: la riga di audit
+        annullata subito faceva violare a ogni scrittura successiva la FK di
+        `t_audit_logs.run_id`."""
+        with Database(DatabaseSettings(url="unused"), policy=INGESTION, bind=db.bind, dry_run=True) as dry:
+            with IngestionRunAudit(dry, "fred", "market_data.t_macro_events") as run:
+                with dry.transaction() as tx:
+                    tx.repository(MacroEvent).insert(
+                        [{"indicator": "TESTREPO_DRY", "ts": date.today(), "value": 1.0,
+                          "source": "test", "fetched_at": _NOW}]
+                    )
+
+        with db.session() as session:
+            assert session.get(IngestionRun, run.run_id) is None
+        with db.transaction() as tx:
+            assert tx.repository(MacroEvent).count(where={"indicator": "TESTREPO_DRY"}) == 0
+
     def test_dry_run_non_lascia_scritture(self, db, asset_id):
-        dry = Database(DatabaseSettings(url="unused"), policy=INGESTION, bind=db.bind, dry_run=True)
-        with dry.transaction() as tx:
-            tx.repository(MarketPrice).insert([_price(asset_id, 0, 1.0)])
+        with Database(DatabaseSettings(url="unused"), policy=INGESTION, bind=db.bind, dry_run=True) as dry:
+            with dry.transaction() as tx:
+                tx.repository(MarketPrice).insert([_price(asset_id, 0, 1.0)])
+            with dry.transaction() as tx:
+                # dentro il dry run la scrittura è visibile alle sessioni successive
+                assert tx.repository(MarketPrice).count(where={"asset_id": asset_id}) == 1
 
         with db.transaction() as tx:
             assert tx.repository(MarketPrice).count(where={"asset_id": asset_id}) == 0

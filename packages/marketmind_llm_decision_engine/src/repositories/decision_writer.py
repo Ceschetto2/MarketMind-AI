@@ -1,6 +1,6 @@
 """Strato di scrittura verso lo schema `decisions`, per `decision_engine/`.
 
-Distinto da `db/writer.py` (scritture idempotenti di ingestion su
+Distinto dai sink delle pipeline di ingestion (scritture idempotenti su
 `market_data`/`raw`): qui non c'è upsert — ogni run e ogni decisione sono
 righe nuove, mai aggiornate. Coerente col principio "solo `db/` parla con
 Postgres" (`Market Mind AI - Docs/Architettura/00_struttura_cartelle.md`).

@@ -1,4 +1,4 @@
-"""Interfacce Pydantic condivise tra ingestion e strato di scrittura.
+"""Interfacce Pydantic delle pipeline di ingestion.
 
 Rispecchia campo per campo il contratto fissato in
 `Market Mind AI - Docs/Data Providers/00_schema_interfacce.md` (vault
@@ -10,18 +10,17 @@ passare dati sporchi in silenzio.
 
 Le interfacce usano identificatori naturali (`symbol`, `indicator`), non
 l'`asset_id`/`news_event_id`/`company_event_id` interni: la risoluzione
-all'id interno avviene nello strato di scrittura/upsert in `db/`, non negli
-script di ingestion, che restano così disaccoppiati dagli id interni e più
-facili da testare in isolamento.
+all'id interno avviene nei sink (`sinks.py`), non nell'estrazione e
+trasformazione di una pipeline, che restano così disaccoppiate dagli id
+interni e più facili da testare in isolamento.
 
 `NewsEventRecord.raw_payload` e `CompanyEventRecord.raw_payload` restano
 parte dell'interfaccia anche se le tabelle raffinate corrispondenti
 (`market_data.t_news_events`/`market_data.t_company_events`) non portano
-più quella colonna: lo strato di scrittura in `db/` instrada il payload
-grezzo verso la tabella dedicata dello schema `raw`
-(`raw.t_news_events_raw`/`raw.t_company_events_raw`, si veda
-`db/models/raw.py`). Un singolo record validato produce quindi due insert
-nella stessa transazione, non uno.
+più quella colonna: i sink instradano il payload grezzo verso la tabella
+dedicata dello schema `raw` (`raw.t_news_events_raw`/
+`raw.t_company_events_raw`). Un singolo record validato produce quindi due
+scritture nella stessa transazione, non una.
 """
 
 from __future__ import annotations
@@ -93,19 +92,39 @@ class MacroEventRecord(BaseModel):
 class CompanyEventRecord(BaseModel):
     """Evento societario, alimentato da Finnhub (`/calendar/earnings`) e FMP
     (bilanci, dividendi, split).
+
+    `income_statement`/`balance_sheet`/`cash_flow` sono i tre bilanci FMP
+    con `event_type` distinti (migrazione `0009`): con lo stesso valore
+    collidevano sulla chiave `(asset_id, ts, event_type, source)` quando
+    riferiti alla stessa data — la norma, un bilancio deposita i tre
+    statement insieme — e un upsert sovrascriveva in silenzio i primi due.
+    `earnings` resta il valore esclusivo di Finnhub.
+
+    I sei campi identificativi opzionali (migrazione `0008`) sono comuni ai
+    tre bilanci FMP e restano `None` per gli eventi Finnhub e per
+    dividendi/split FMP.
     """
 
     symbol: str
     ts: date
-    event_type: Literal["earnings", "dividend", "split"]
+    event_type: Literal[
+        "earnings", "income_statement", "balance_sheet", "cash_flow", "dividend", "split"
+    ]
     raw_payload: dict
     source: str
     fetched_at: datetime
+    fiscal_year: Optional[str] = None
+    period: Optional[str] = None
+    reported_currency: Optional[str] = None
+    cik: Optional[str] = None
+    filing_date: Optional[date] = None
+    accepted_date: Optional[date] = None
 
 
 class UniverseMemberRecord(BaseModel):
     """Appartenenza all'universo osservato, alimentata dalla pipeline
-    `universe-csv` (seed statico `seeds/universe.csv`, non un'API esterna).
+    `universe-csv` (seed statico `seeds/universe.csv` del pacchetto, non un'API
+    esterna).
 
     `is_benchmark` è `True` solo per SPY: esclude l'asset dalla lista su cui
     gira il motore decisionale, non dall'ingestion.

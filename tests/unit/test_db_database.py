@@ -6,6 +6,7 @@ factory è sostituita da un mock.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import Connection, Engine
 
 from marketmind_db.access import INGESTION, READ_ONLY
 from marketmind_db.audit import IngestionRunAudit
@@ -64,12 +65,42 @@ class TestSession:
         session.commit.assert_not_called()
         session.close.assert_called_once()
 
-    def test_dry_run_annulla_invece_di_committare(self, mocker, session):
-        with _db(mocker, session, dry_run=True).session():
-            pass
+    def test_dry_run_committa_le_sessioni_ma_annulla_la_transazione_esterna(self, mocker):
+        """In dry run le sessioni committano normalmente (diventano SAVEPOINT
+        di un'unica transazione esterna): la riga di audit di un run deve
+        restare visibile alle scritture successive, che la referenziano via
+        FK. È la transazione esterna a essere annullata, alla chiusura."""
+        engine = mocker.MagicMock(spec=Engine)
+        connection = engine.connect.return_value
+        connection.in_transaction.return_value = False
+        db = Database(DatabaseSettings(url="x", statement_timeout_ms=None), policy=INGESTION, dry_run=True, bind=engine)
+        session = mocker.MagicMock()
+        mocker.patch.object(db, "session_factory", return_value=lambda: session)
 
-        session.rollback.assert_called_once()
-        session.commit.assert_not_called()
+        with db:
+            with db.session():
+                pass
+            assert db.bind is connection
+            session.commit.assert_called_once()
+            connection.begin.return_value.rollback.assert_not_called()
+
+        connection.begin.return_value.rollback.assert_called_once()
+        connection.close.assert_called_once()
+
+    def test_dry_run_su_connessione_gia_in_transazione_usa_un_savepoint(self, mocker):
+        connection = mocker.MagicMock(spec=Connection)
+        connection.in_transaction.return_value = True
+        db = Database(DatabaseSettings(url="x"), policy=INGESTION, dry_run=True, bind=connection)
+
+        assert db.bind is connection
+        db.close()
+
+        connection.begin_nested.return_value.rollback.assert_called_once()
+        connection.close.assert_not_called()
+
+    def test_close_senza_dry_run_non_fa_nulla(self, mocker, session):
+        db = _db(mocker, session)
+        db.close()
 
     def test_imposta_statement_timeout_locale(self, mocker, session):
         with _db(mocker, session, timeout_ms=1500).session():

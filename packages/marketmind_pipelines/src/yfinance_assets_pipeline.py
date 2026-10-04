@@ -1,85 +1,48 @@
 """Pipeline `yfinance-assets`: anagrafica per l'universo osservato.
 
-Entry point standalone, invocato dal container Quadlet
-`marketmind-ingest-yfinance-assets.container` — cadenza mensile (già
-decisa: l'anagrafica cambia di rado, a differenza dei prezzi orari di
-`yfinance-prices`).
+Cadenza mensile (timer `marketmind-ingest-yfinance-assets.timer`):
+l'anagrafica cambia di rado, a differenza dei prezzi orari.
 
 `.info` ha ~170 chiavi (`01_yfinance_onboarding.md`); solo `symbol`,
-`longName`, `sector`, `quoteType` sono rilevanti per `AssetRecord` — il
-resto (dati di mercato realtime, fondamentali riassuntivi, campi anagrafici
-estesi) non viene preservato: a differenza di news/eventi societari,
-`AssetRecord` non porta un `raw_payload`, non c'è uno schema `raw` per
-questa tabella.
+`longName`, `sector`, `quoteType` servono ad `AssetRecord` — il resto non
+viene preservato: `AssetRecord` non porta un `raw_payload`, non c'è uno
+schema `raw` per questa tabella.
 """
 
 from __future__ import annotations
 
-import logging
-import random
-import time
 from datetime import datetime, timezone
 
 import yfinance as yf
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from marketmind_db.session import get_session
-from marketmind_db.writer import get_universe_symbols, ingestion_run, upsert_asset
-from marketmind_db.schemas import AssetRecord
-from marketmind_common.logging_config import configure_logging
-
-logger = logging.getLogger(__name__)
+from marketmind_pipelines.base import PerSymbolPipeline
+from marketmind_pipelines.http import call_with_retry
+from marketmind_pipelines.records import AssetRecord
+from marketmind_pipelines.sinks import AssetSink
 
 SOURCE = "yfinance"
-TARGET_TABLE = "market_data.t_assets"
-
-_DELAY_BETWEEN_SYMBOLS = (1.0, 3.0)
 
 
-@retry(
-    retry=retry_if_exception_type(Exception),
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=2, min=2, max=30),
-    reraise=True,
-)
-def _fetch_info(symbol: str) -> dict:
-    return yf.Ticker(symbol).info
-
-
-def _info_to_record(info: dict) -> AssetRecord:
+def info_to_record(info: dict, fetched_at: datetime) -> AssetRecord:
     return AssetRecord(
         symbol=info["symbol"],
         name=info["longName"],
         sector=info.get("sector"),
         asset_type=info["quoteType"].lower(),
         source=SOURCE,
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=fetched_at,
     )
 
 
-def run() -> None:
-    symbols = get_universe_symbols()
-    logger.info("universo: %d ticker da aggiornare", len(symbols))
+class YFinanceAssetsPipeline(PerSymbolPipeline[dict, AssetRecord]):
+    name = "yfinance-assets"
+    audit_source = "yfinance"
+    target_table = "market_data.t_assets"
+    sink = AssetSink
+    delay_between_targets = (1.0, 3.0)
 
-    with ingestion_run(SOURCE, TARGET_TABLE) as tracker:
-        for i, symbol in enumerate(symbols):
-            if i > 0:
-                time.sleep(random.uniform(*_DELAY_BETWEEN_SYMBOLS))
+    def extract(self, target: str) -> dict:
+        return call_with_retry(lambda: yf.Ticker(target).info, sleep=self._sleep)
 
-            try:
-                info = _fetch_info(symbol)
-                record = _info_to_record(info)
-            except Exception:
-                logger.exception("fetch fallito per %s, salto al prossimo ticker", symbol)
-                continue
-
-            with get_session() as session:
-                upsert_asset(session, record)
-                tracker.rows_written += 1
-
-    logger.info("completato: %d righe scritte", tracker.rows_written)
-
-
-if __name__ == "__main__":
-    configure_logging()
-    run()
+    def transform(self, target: str, raw: dict) -> list[AssetRecord]:
+        return [info_to_record(raw, datetime.now(timezone.utc))]

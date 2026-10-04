@@ -77,13 +77,30 @@ class Database:
     ) -> None:
         """`bind` sostituisce l'engine creato da `settings.url` — usato nei
         test per legare tutto a una connessione con transazione esterna
-        annullata a fine test. `dry_run=True` annulla ogni transazione
-        invece di committarla."""
+        annullata a fine test.
+
+        `dry_run=True`: tutto il lavoro passa da un'unica connessione con una
+        transazione esterna, e ogni sessione diventa un `SAVEPOINT` — le
+        scritture di una transazione restano visibili alle successive (la
+        riga di audit di un run serve alle righe che la referenziano via
+        FK), ma nulla viene committato davvero: `close()` (o l'uscita da
+        `with Database(...)`) annulla la transazione esterna. Se il processo
+        termina senza `close()`, Postgres la annulla alla chiusura della
+        connessione."""
         self.settings = settings
         self.policy = policy
         self.dry_run = dry_run
         self._bind = bind
         self._factory: sessionmaker[Session] | None = None
+        self._dry_run_connection: Connection | None = None
+        self._dry_run_transaction: Any = None
+        self._owns_dry_run_connection = False
+
+    def __enter__(self) -> Database:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
     @property
     def bind(self) -> Engine | Connection:
@@ -91,11 +108,35 @@ class Database:
             self._bind = create_engine(
                 self.settings.url, pool_pre_ping=self.settings.pool_pre_ping, future=True
             )
-        return self._bind
+        if self.dry_run and self._dry_run_connection is None:
+            self._open_dry_run_transaction()
+        return self._dry_run_connection if self.dry_run else self._bind
+
+    def _open_dry_run_transaction(self) -> None:
+        base = self._bind
+        if isinstance(base, Connection):
+            connection = base
+        else:
+            connection = base.connect()
+            self._owns_dry_run_connection = True
+        self._dry_run_transaction = (
+            connection.begin_nested() if connection.in_transaction() else connection.begin()
+        )
+        self._dry_run_connection = connection
+
+    def close(self) -> None:
+        """In dry run annulla tutto il lavoro fatto; altrimenti non fa nulla."""
+        if self._dry_run_transaction is not None:
+            self._dry_run_transaction.rollback()
+            self._dry_run_transaction = None
+        if self._dry_run_connection is not None and self._owns_dry_run_connection:
+            self._dry_run_connection.close()
+        self._dry_run_connection = None
+        self._factory = None
 
     @property
     def engine(self) -> Engine:
-        bind = self.bind
+        bind = self._bind if self._bind is not None else self.bind
         return bind.engine if isinstance(bind, Connection) else bind
 
     def session_factory(self) -> sessionmaker[Session]:
@@ -112,17 +153,15 @@ class Database:
 
     @contextmanager
     def session(self) -> Iterator[Session]:
-        """Sessione con commit automatico (rollback su eccezione o in dry run)."""
+        """Sessione con commit automatico (rollback su eccezione). In dry run
+        il commit chiude solo un `SAVEPOINT` della transazione esterna."""
         session = self.session_factory()()
         try:
             apply_run_context(session)
             if self.settings.statement_timeout_ms is not None:
                 set_local_setting(session, "statement_timeout", self.settings.statement_timeout_ms)
             yield session
-            if self.dry_run:
-                session.rollback()
-            else:
-                session.commit()
+            session.commit()
         except BaseException:
             session.rollback()
             raise
@@ -138,7 +177,7 @@ class Database:
 @lru_cache(maxsize=1)
 def default_database() -> Database:
     """Il `Database` condiviso dal codice non ancora migrato (`get_session()`,
-    `writer.py`, Decision Engine, dashboard): accesso completo e nessuno
+    Decision Engine, dashboard): accesso completo e nessuno
     `statement_timeout`, cioè lo stesso comportamento di prima del
     repository generico. Il codice nuovo costruisce il proprio `Database`
     con la policy del suo ruolo."""

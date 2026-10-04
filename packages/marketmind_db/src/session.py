@@ -1,8 +1,7 @@
 """Funzioni di sessione del codice non ancora migrato a `Database`.
 
 `get_engine()`/`get_session_factory()`/`get_session()` restano l'interfaccia
-usata dal Decision Engine, dalla dashboard, da `writer.py` e dalle pipeline
-di ingestion attuali: delegano tutte a `default_database()`
+usata dal Decision Engine e dalla dashboard: delegano tutte a `default_database()`
 (`marketmind_db.database`), quindi una sola implementazione di sessione,
 GUC del `run_id` e commit/rollback. Il codice nuovo usa direttamente
 `Database.transaction()` con la policy del proprio ruolo.
