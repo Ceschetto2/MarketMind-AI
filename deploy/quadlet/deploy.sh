@@ -23,7 +23,12 @@
 #   deploy/quadlet/deploy.sh                     # symlink + secret + DB + ruoli + migrazioni + timer (idempotente)
 #   deploy/quadlet/deploy.sh --build             # come sopra, ricostruendo prima le quattro immagini
 #   deploy/quadlet/deploy.sh --restart           # come sopra ma forza un restart di marketmind-db
-#                                                   (--build e --restart si possono combinare)
+#   deploy/quadlet/deploy.sh --keep-secrets      # come sopra senza ricreare i secret né riallineare
+#                                                   le password dei ruoli: usa i secret Podman già
+#                                                   esistenti (verifica che ci siano tutti) — per un
+#                                                   redeploy di codice/unit senza avere le password
+#                                                   in ambiente
+#                                                   (--build, --restart e --keep-secrets si possono combinare)
 #   deploy/quadlet/deploy.sh --trigger <pipeline>  # avvia subito marketmind-ingest-<pipeline>.service
 #                                                   # (run manuale ad hoc, non aspetta il timer);
 #                                                   # non esegue il resto del deploy, vedi nota sotto
@@ -115,13 +120,25 @@ fi
 
 BUILD=0
 RESTART=0
+KEEP_SECRETS=0
 for arg in "$@"; do
     case "$arg" in
         --build) BUILD=1 ;;
         --restart) RESTART=1 ;;
-        *) fail "argomento sconosciuto: $arg (ammessi: --build, --restart, --trigger <pipeline>)" ;;
+        --keep-secrets) KEEP_SECRETS=1 ;;
+        *) fail "argomento sconosciuto: $arg (ammessi: --build, --restart, --keep-secrets, --trigger <pipeline>)" ;;
     esac
 done
+
+SECRETS=(
+    marketmind-db-password
+    marketmind-ingestion-password
+    marketmind-app-password
+    marketmind-finnhub-api-key
+    marketmind-fred-api-key
+    marketmind-fmp-api-key
+    marketmind-gemini-api-key
+)
 
 command -v podman >/dev/null 2>&1 || fail "podman non trovato in PATH"
 command -v systemctl >/dev/null 2>&1 || fail "systemctl non trovato in PATH"
@@ -246,6 +263,13 @@ store_secret() {
     fi
 }
 
+if [ "$KEEP_SECRETS" = "1" ]; then
+    log "--keep-secrets: verifico i secret esistenti, nessuna ricreazione"
+    for secret in "${SECRETS[@]}"; do
+        podman secret exists "$secret" || fail "secret $secret mancante: serve un deploy senza --keep-secrets"
+        log "  $secret presente"
+    done
+else
 log "provisioning secret"
 store_secret marketmind-db-password MARKETMIND_DB_PASSWORD 1
 store_secret marketmind-ingestion-password MARKETMIND_INGESTION_PASSWORD 1
@@ -258,6 +282,7 @@ store_secret marketmind-finnhub-api-key FINNHUB_API_KEY 0
 store_secret marketmind-fred-api-key FRED_API_KEY 0
 store_secret marketmind-fmp-api-key FMP_API_KEY 0
 store_secret marketmind-gemini-api-key GEMINI_API_KEY 0
+fi
 
 log "systemctl --user daemon-reload"
 systemctl --user daemon-reload
@@ -304,6 +329,9 @@ done
 # le legge da stdin senza mai popolare la variabile di shell): è l'unico
 # punto dello script dove il valore in chiaro serve una seconda volta, per
 # l'ALTER ROLE ... PASSWORD.
+if [ "$KEEP_SECRETS" = "1" ]; then
+    log "--keep-secrets: password dei ruoli applicativi lasciate invariate"
+else
 : "${MARKETMIND_INGESTION_PASSWORD:=}"
 : "${MARKETMIND_APP_PASSWORD:=}"
 [ -n "$MARKETMIND_INGESTION_PASSWORD" ] || fail "MARKETMIND_INGESTION_PASSWORD non impostata nell'ambiente — necessaria per allineare la password del ruolo marketmind_ingestion (l'inserimento interattivo del solo secret non basta)"
@@ -317,6 +345,7 @@ rendered_sql="${rendered_sql//%%MARKETMIND_APP_PASSWORD%%/$MARKETMIND_APP_PASSWO
 printf '%s\n' "$rendered_sql" | podman exec -i "$DB_CONTAINER_NAME" psql -U marketmind -d marketmind \
     || fail "init-roles.sql.tmpl fallito — vedi output psql sopra"
 log "ruoli applicativi allineati"
+fi
 
 # --- Migrazioni: prima di (ri)abilitare qualunque timer ---
 # One-shot con RemainAfterExit: `restart` la riesegue anche se già "active"
