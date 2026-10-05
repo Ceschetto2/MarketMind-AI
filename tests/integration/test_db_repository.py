@@ -185,6 +185,29 @@ class TestLettureEScritture:
             assert tx.repository(Asset).get_one(symbol="NON-ESISTE-XYZ") is None
 
 
+class TestLatestPer:
+    def test_ultima_riga_per_indicatore_fino_a_una_data(self, db):
+        rows = [
+            {"indicator": ind, "ts": ts, "value": v, "source": "test", "fetched_at": _NOW}
+            for ind, ts, v in [
+                ("TESTREPO_A", date(2026, 7, 1), 1.0),
+                ("TESTREPO_A", date(2026, 8, 1), 2.0),
+                ("TESTREPO_A", date(2026, 9, 1), 3.0),
+                ("TESTREPO_B", date(2026, 6, 1), 10.0),
+            ]
+        ]
+        with db.transaction() as tx:
+            macro = tx.repository(MacroEvent)
+            macro.insert(rows)
+            latest = macro.latest_per(
+                ("indicator",),
+                order_by="ts",
+                where=[MacroEvent.indicator.in_(["TESTREPO_A", "TESTREPO_B"]), MacroEvent.ts <= date(2026, 8, 15)],
+            )
+
+        assert sorted((r.indicator, r.value) for r in latest) == [("TESTREPO_A", 2.0), ("TESTREPO_B", 10.0)]
+
+
 class TestDatabase:
     def test_statement_timeout_interrompe_query_lente(self, db):
         slow = Database(DatabaseSettings(url="unused", statement_timeout_ms=50), policy=INGESTION, bind=db.bind)

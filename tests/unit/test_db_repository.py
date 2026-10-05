@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 
 from marketmind_db.access import FULL_ACCESS, INGESTION, READ_ONLY, AccessPolicy
 from marketmind_db.exceptions import AccessDeniedError, InvalidQueryError
-from marketmind_db.models.market_data import Asset, CompanyEvent, MarketPrice, NewsEvent
+from marketmind_db.models.market_data import Asset, CompanyEvent, MacroEvent, MarketPrice, NewsEvent
 from marketmind_db.models.portfolio import Portfolio
 from marketmind_db.repository import TableRepository
 
@@ -329,3 +329,23 @@ class TestLetture:
     def test_values_su_colonna_sconosciuta_rifiutato(self, session):
         with pytest.raises(InvalidQueryError, match="nope"):
             _repo(session, Asset).values("nope")
+
+
+class TestLatestPer:
+    def test_distinct_on_con_ordinamento_decrescente(self, session):
+        _repo(session, MacroEvent).latest_per(("indicator",), order_by="ts", where=[MacroEvent.ts <= _NOW.date()])
+
+        sql = _sql(session.execute.call_args.args[0])
+        assert "DISTINCT ON (market_data.t_macro_events.indicator)" in sql
+        assert "ORDER BY market_data.t_macro_events.indicator, market_data.t_macro_events.ts DESC" in sql
+        assert "t_macro_events.ts <=" in sql
+
+    def test_colonne_sconosciute_rifiutate(self, session):
+        with pytest.raises(InvalidQueryError, match="nope"):
+            _repo(session, MacroEvent).latest_per(("nope",), order_by="ts")
+        with pytest.raises(InvalidQueryError, match="nope"):
+            _repo(session, MacroEvent).latest_per(("indicator",), order_by="nope")
+
+    def test_group_by_vuoto_rifiutato(self, session):
+        with pytest.raises(InvalidQueryError, match="group_by"):
+            _repo(session, MacroEvent).latest_per((), order_by="ts")
