@@ -936,6 +936,7 @@ version = "0.1.0"
 source = { editable = "packages/marketmind_llm_decision_engine" }
 dependencies = [
     { name = "google-genai" },
+    { name = "httpx" },
     { name = "marketmind-common" },
     { name = "marketmind-db" },
     { name = "pandas" },
@@ -949,6 +950,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=2.23.0" },
+    { name = "httpx" },
     { name = "marketmind-common", editable = "packages/marketmind_common" },
     { name = "marketmind-db", editable = "packages/marketmind_db" },
     { name = "pandas" },

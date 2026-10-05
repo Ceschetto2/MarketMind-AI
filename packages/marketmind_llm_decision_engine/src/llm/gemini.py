@@ -24,10 +24,11 @@ import logging
 import re
 from typing import Any, TypeVar
 
+import httpx
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from marketmind_common.config import get_api_key
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
@@ -84,8 +85,17 @@ _WATCHLIST_SYSTEM_PROMPT = (
 )
 
 
+def _is_transient(exc: BaseException) -> bool:
+    """Riprovabili: 5xx (`ServerError`, anche 504 di deadline) ed errori di
+    rete/timeout del trasporto. Non riprovabili: i 4xx (`ClientError`) — un
+    429 per quota giornaliera esaurita, un modello inesistente, una
+    richiesta malformata non cambiano riprovando, consumerebbero solo altra
+    quota — e qualunque altra eccezione, che è un errore del codice."""
+    return isinstance(exc, (errors.ServerError, httpx.TransportError))
+
+
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception(_is_transient),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=2, min=2, max=20),
     reraise=True,

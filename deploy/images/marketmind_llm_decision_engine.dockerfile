@@ -38,5 +38,7 @@ RUN useradd --system --no-create-home marketmind
 USER marketmind
 WORKDIR /app
 
-ENTRYPOINT ["python", "-m"]
-CMD ["marketmind_llm_decision_engine.decision_engine.pipeline"]
+# Il comando arriva da `Exec=` della unit Quadlet; di default il giro del
+# timer condiviso (`run-due`).
+ENTRYPOINT ["python", "-m", "marketmind_llm_decision_engine"]
+CMD ["run-due"]

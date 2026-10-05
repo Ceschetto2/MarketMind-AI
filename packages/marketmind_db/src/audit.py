@@ -18,10 +18,29 @@ from __future__ import annotations
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from types import TracebackType
+from typing import Literal
 
 from marketmind_db.database import Database
 from marketmind_db.models.audit import IngestionRun
 from marketmind_db.run_context import track_ingestion_run
+
+
+RunStatus = Literal["success", "partial", "failed"]
+
+DEFAULT_FAILURE_THRESHOLD = 0.5
+
+
+def run_outcome(total: int, failed: int, threshold: float = DEFAULT_FAILURE_THRESHOLD) -> RunStatus:
+    """Esito di un run fatto di unità di lavoro isolate (target di una
+    pipeline, decisioni di un giro del motore): `success` se nessuna è
+    fallita, `partial` se ne è fallita almeno una fino a `threshold`
+    compreso, `failed` oltre. Condivisa da pipeline e Decision Engine, così
+    `t_ingestion_runs` e `t_model_runs` usano la stessa regola."""
+    if failed == 0:
+        return "success"
+    if failed / total > threshold:
+        return "failed"
+    return "partial"
 
 
 class IngestionRunAudit:

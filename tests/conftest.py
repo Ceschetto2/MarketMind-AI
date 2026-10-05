@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from marketmind_db.access import INGESTION
+from marketmind_db.access import APP, FULL_ACCESS, INGESTION
 from marketmind_db.database import Database, DatabaseSettings
 from marketmind_db.session import get_engine
 
@@ -56,19 +56,41 @@ def db_session(_db_reachable: bool):
 
 
 @pytest.fixture
-def rollback_db(_db_reachable: bool):
-    """`Database` (policy `INGESTION`) legato a una connessione con una
-    transazione esterna sempre annullata a fine test: anche i `commit()` di
-    `Database.session()`/`transaction()` — e quindi di sink, pipeline e
-    `IngestionRunAudit` — diventano `SAVEPOINT`. Il codice sotto test scrive
-    per davvero su Postgres, ma nulla resta nel DB a fine test: nessuna
-    pulizia esplicita, nessun dato di prova che sopravvive a un test
-    fallito a metà."""
+def rollback_connection(_db_reachable: bool):
+    """Connessione con una transazione esterna sempre annullata a fine test:
+    ogni `Database` legato a questa connessione trasforma i propri
+    `commit()` in `SAVEPOINT`. Il codice sotto test scrive per davvero su
+    Postgres, ma nulla resta nel DB a fine test: nessuna pulizia esplicita,
+    nessun dato di prova che sopravvive a un test fallito a metà."""
     if not _db_reachable:
         pytest.skip("Postgres non raggiungibile (marketmind-db) — vedi .env")
 
     connection = get_engine().connect()
     transaction = connection.begin()
-    yield Database(DatabaseSettings(url=str(get_engine().url)), policy=INGESTION, bind=connection)
+    yield connection
     transaction.rollback()
     connection.close()
+
+
+def _bound_database(connection, policy) -> Database:
+    return Database(DatabaseSettings(url=str(get_engine().url)), policy=policy, bind=connection)
+
+
+@pytest.fixture
+def rollback_db(rollback_connection) -> Database:
+    """`Database` con policy `INGESTION` sulla transazione annullata."""
+    return _bound_database(rollback_connection, INGESTION)
+
+
+@pytest.fixture
+def rollback_app_db(rollback_connection) -> Database:
+    """`Database` con policy `APP` (Decision Engine) sulla stessa transazione
+    annullata di `rollback_full_db`: il codice sotto test scrive solo dove il
+    suo ruolo può, la preparazione dei dati passa da `rollback_full_db`."""
+    return _bound_database(rollback_connection, APP)
+
+
+@pytest.fixture
+def rollback_full_db(rollback_connection) -> Database:
+    """`Database` con policy `FULL_ACCESS`, per preparare i dati di prova."""
+    return _bound_database(rollback_connection, FULL_ACCESS)

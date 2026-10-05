@@ -14,7 +14,8 @@
 # Immagine propria del Decision Engine (`marketmind-llm-decision-engine`,
 # `deploy/images/marketmind_llm_decision_engine.dockerfile`, build:
 # `deploy.sh --build`), separata da quella delle pipeline di ingestion:
-# `Exec=` è il modulo da eseguire con `python -m` (l'ENTRYPOINT dell'immagine).
+# `Exec=` passa il comando all'entry point `python -m
+# marketmind_llm_decision_engine` dell'immagine.
 #
 # `Network=marketmind.network` come le altre unit — risolve
 # `POSTGRES_HOST=marketmind-db` via il DNS integrato di Podman.
@@ -40,7 +41,7 @@ After=marketmind-db.service marketmind-migrate.service
 Image=localhost/marketmind-llm-decision-engine:latest
 ContainerName=marketmind-decide
 Network=marketmind.network
-Exec=marketmind_llm_decision_engine.decision_engine.pipeline
+Exec=run-due
 Secret=marketmind-app-password,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_HOST=marketmind-db
 Environment=POSTGRES_PORT=5432

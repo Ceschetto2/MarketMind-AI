@@ -10,6 +10,9 @@ from __future__ import annotations
 import pytest
 
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+import httpx
+from google.genai import errors
+
 from marketmind_llm_decision_engine.llm.gemini import GeminiProvider, _call_gemini
 from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
@@ -100,32 +103,64 @@ class TestDecide:
         assert "2026-09-01" in kwargs["prompt"]
 
 
-class TestCallGemiRetry:
-    def test_retries_and_eventually_succeeds(self, mocker):
-        mock_client = mocker.Mock()
-        mock_client.models.generate_content.side_effect = [
-            RuntimeError("transitorio"),
-            RuntimeError("transitorio"),
-            _mock_response(mocker, '{"decision": "HOLD"}'),
-        ]
+def _api_error(cls, code: int, status: str):
+    return cls(code, {"error": {"code": code, "message": status, "status": status}})
+
+
+class TestCallGeminiRetry:
+    """Si riprova solo ciò che può risolversi da sé: 5xx e errori di rete.
+    Un 4xx (429 per quota giornaliera esaurita, 400, 404 di un modello
+    inesistente) non cambia riprovando, consumerebbe solo altra quota."""
+
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, mocker):
         mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
 
-        response = _call_gemini(
-            mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
-        )
+    def _call(self, client):
+        return _call_gemini(client, model="gemini-3.6-flash", prompt="ciao", response_schema=Decision)
 
-        assert response.text == '{"decision": "HOLD"}'
-        assert mock_client.models.generate_content.call_count == 3
+    @pytest.mark.parametrize(
+        "transient",
+        [
+            _api_error(errors.ServerError, 500, "INTERNAL"),
+            _api_error(errors.ServerError, 504, "DEADLINE_EXCEEDED"),
+            httpx.ConnectError("rete non raggiungibile"),
+            httpx.ReadTimeout("timeout"),
+        ],
+        ids=["500", "504", "connessione", "timeout"],
+    )
+    def test_errori_transitori_riprovati(self, mocker, transient):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [transient, _mock_response(mocker, '{"decision": "HOLD"}')]
 
-    def test_propagates_after_stop_after_attempt(self, mocker):
-        mock_client = mocker.Mock()
-        mock_client.models.generate_content.side_effect = RuntimeError("transitorio")
-        mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
+        assert self._call(client).text == '{"decision": "HOLD"}'
+        assert client.models.generate_content.call_count == 2
 
-        with pytest.raises(RuntimeError):
-            _call_gemini(
-                mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
-            )
+    @pytest.mark.parametrize(
+        "permanent",
+        [
+            _api_error(errors.ClientError, 429, "RESOURCE_EXHAUSTED"),
+            _api_error(errors.ClientError, 400, "INVALID_ARGUMENT"),
+            _api_error(errors.ClientError, 404, "NOT_FOUND"),
+            RuntimeError("bug nel codice"),
+        ],
+        ids=["429", "400", "404", "altro"],
+    )
+    def test_errori_permanenti_non_riprovati(self, mocker, permanent):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = permanent
+
+        with pytest.raises(type(permanent)):
+            self._call(client)
+        assert client.models.generate_content.call_count == 1
+
+    def test_si_arrende_dopo_tre_tentativi(self, mocker):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = _api_error(errors.ServerError, 500, "INTERNAL")
+
+        with pytest.raises(errors.ServerError):
+            self._call(client)
+        assert client.models.generate_content.call_count == 3
 
 
 class TestSelectWatchlist:
