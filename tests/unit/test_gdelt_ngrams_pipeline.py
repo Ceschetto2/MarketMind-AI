@@ -129,6 +129,23 @@ class TestParseToc:
     def test_empty_text_returns_empty_dict(self):
         assert parse_toc("") == {}
 
+    def test_riga_json_troncata_o_senza_id_viene_saltata(self, caplog):
+        """Un `toc.json.gz` con una riga JSON troncata (osservato il 5 ottobre
+        alle 11:45) faceva fallire l'intero run: si salta solo quella riga."""
+        text = "\n".join(
+            [
+                json.dumps({"ID": 1, "date": "2026-10-05", "title": "T1", "url": "https://a"}),
+                '{"ID": 2, "date": "2026-10-05", "title": "troncat',
+                json.dumps({"date": "2026-10-05", "title": "senza ID", "url": "https://c"}),
+                json.dumps({"ID": 3, "date": "2026-10-05", "title": "T3", "url": "https://b"}),
+            ]
+        )
+
+        toc = parse_toc(text)
+
+        assert set(toc) == {"1", "3"}
+        assert "2 righe" in caplog.text
+
 
 class TestMatchSymbol:
     """Entity linking: match sul ticker (parola intera, case-sensitive — i
