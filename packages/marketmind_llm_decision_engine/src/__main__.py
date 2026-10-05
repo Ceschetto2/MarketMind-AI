@@ -30,7 +30,6 @@ from types import FrameType
 from marketmind_common.logging_config import configure_logging
 from marketmind_db.access import APP
 from marketmind_db.database import Database, DatabaseSettings
-from marketmind_llm_decision_engine.backtest.engine import Backtester, NoTradesForRunError, PostgresBacktestStore
 from marketmind_llm_decision_engine.decision_engine.engine import DecisionEngine
 from marketmind_llm_decision_engine.decision_engine.store import PostgresDecisionStore
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
@@ -66,6 +65,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def _run(args: argparse.Namespace, db: Database) -> int:
     if args.command == "backtest":
+        # Import qui, non in testa: vectorbt (e numba) servono solo al
+        # backtest, e rallenterebbero ogni `run-due` orario.
+        from marketmind_llm_decision_engine.backtest.engine import (
+            Backtester,
+            NoTradesForRunError,
+            PostgresBacktestStore,
+        )
+
         try:
             metrics, backtest_id = Backtester(PostgresBacktestStore(db)).run(
                 portfolio_id=args.portfolio_id,

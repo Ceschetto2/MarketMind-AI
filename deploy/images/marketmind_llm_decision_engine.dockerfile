@@ -31,8 +31,12 @@ RUN uv sync --frozen --no-dev --package marketmind-llm-decision-engine --no-edit
 FROM python:3.14-slim
 
 COPY --from=build /app/.venv /app/.venv
+# vectorbt compila con numba e ne salva la cache accanto ai sorgenti, in
+# site-packages: non scrivibile da un utente non root. NUMBA_CACHE_DIR la
+# sposta in una directory scrivibile.
 ENV PATH="/app/.venv/bin:${PATH}" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    NUMBA_CACHE_DIR=/tmp/numba-cache
 
 RUN useradd --system --no-create-home marketmind
 USER marketmind

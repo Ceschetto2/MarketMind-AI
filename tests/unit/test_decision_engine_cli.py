@@ -86,7 +86,7 @@ class TestInitPortfolio:
 
 class TestBacktest:
     def test_backtest_salvato(self, mocker, database):
-        backtester = mocker.patch.object(cli, "Backtester").return_value
+        backtester = mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value
         metrics = BacktestMetrics(1.0, None, None, None, datetime(2026, 9, 1).date(), datetime(2026, 9, 2).date())
         backtester.run.return_value = (metrics, 5)
 
@@ -97,7 +97,7 @@ class TestBacktest:
         assert kwargs["as_of"].tzinfo is timezone.utc
 
     def test_no_save(self, mocker, database):
-        backtester = mocker.patch.object(cli, "Backtester").return_value
+        backtester = mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value
         backtester.run.return_value = (mocker.Mock(), None)
 
         cli.main(["backtest", "4", "41", "--no-save"])
@@ -105,6 +105,19 @@ class TestBacktest:
         assert backtester.run.call_args.kwargs["save"] is False
 
     def test_run_senza_trade(self, mocker, database):
-        mocker.patch.object(cli, "Backtester").return_value.run.side_effect = NoTradesForRunError("nessun trade")
+        mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value.run.side_effect = NoTradesForRunError("nessun trade")
 
         assert cli.main(["backtest", "4", "41"]) == 1
+
+
+def test_run_due_non_importa_vectorbt():
+    """Il giro orario non deve pagare l'import di vectorbt/numba."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, marketmind_llm_decision_engine.__main__ as m; "
+        "print('vectorbt' in sys.modules)"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"
