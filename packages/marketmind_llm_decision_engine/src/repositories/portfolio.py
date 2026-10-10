@@ -1,7 +1,7 @@
 """Letture e scritture su `portfolio` per il Decision Engine.
 
 Ogni metodo lavora su un solo `portfolio_id` (isolamento tra portfolio),
-tranne `due_model_portfolios`, che restituisce l'elenco su cui iterare.
+tranne `active_model_portfolios`, che restituisce l'elenco su cui iterare.
 """
 
 from __future__ import annotations
@@ -25,10 +25,17 @@ class PortfolioRef:
     name: str
     llm_provider: str | None
     model_version: str | None
+    next_decision_at: datetime | None = None
 
     @classmethod
     def of(cls, portfolio: Portfolio) -> PortfolioRef:
-        return cls(portfolio.portfolio_id, portfolio.name, portfolio.llm_provider, portfolio.model_version)
+        return cls(
+            portfolio.portfolio_id,
+            portfolio.name,
+            portfolio.llm_provider,
+            portfolio.model_version,
+            portfolio.next_decision_at,
+        )
 
 
 @dataclass(frozen=True)
@@ -51,16 +58,12 @@ class PortfolioRepository:
             raise LookupError(f"portfolio {portfolio_id} inesistente")
         return portfolio
 
-    def due_model_portfolios(self, as_of: datetime) -> list[Portfolio]:
-        """Portfolio `model` attivi il cui giro è dovuto: `next_decision_at`
-        nullo (mai schedulato) o già scaduto. Il benchmark è escluso per
-        disegno."""
+    def active_model_portfolios(self) -> list[Portfolio]:
+        """Portfolio `model` attivi, su cui il motore controlla a ogni scatto
+        se aprire un ciclo nuovo o riprendere quello in corso. Il benchmark è
+        escluso per disegno."""
         return self.tx.repository(Portfolio).select(
-            where=[
-                Portfolio.portfolio_type == "model",
-                Portfolio.is_active.is_(True),
-                (Portfolio.next_decision_at.is_(None)) | (Portfolio.next_decision_at <= as_of),
-            ],
+            where=[Portfolio.portfolio_type == "model", Portfolio.is_active.is_(True)],
             order_by=("portfolio_id",),
             limit=None,
         )

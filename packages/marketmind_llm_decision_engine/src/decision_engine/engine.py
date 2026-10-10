@@ -1,28 +1,32 @@
-"""Il loop del motore decisionale: un giro indipendente per ciascun
-portfolio `model` attivo il cui turno è dovuto, ciascuno col proprio
-provider LLM — i portfolio non condividono mai stato.
+"""Il loop del motore decisionale, a cicli: per ciascun portfolio `model`
+attivo, indipendente dagli altri e col proprio provider LLM.
 
-Un giro (`_run_portfolio`) chiede a `decide()` un giudizio BUY/SELL/HOLD per
-ogni asset della watchlist del portfolio e lo registra; un BUY/SELL viene
-eseguito subito, nella stessa transazione della decisione, all'ultimo
-prezzo noto nel contesto (mai un dato futuro), se non è più vecchio di
-`max_price_age` — altrimenti la decisione resta registrata ma il trade è
-saltato. La size è quella proposta dall'LLM (`Decision.size_pct`). Le
-decisioni di un giro sono sequenziali: il cash disponibile per un asset
-tiene conto dei trade già fatti sugli asset precedenti.
+Un ciclo è un solo run (`t_model_runs`), il cui `ts` è l'inizio del ciclo.
+Quando il portfolio è dovuto (`next_decision_at` nullo o scaduto) si apre un
+ciclo: si crea il run, si fissa subito il prossimo ciclo a `ts` +
+`interval` (prima di decidere: se il processo muore a metà, lo scatto
+successivo riprende questo ciclo invece di aprirne un altro) e si chiede a
+`decide()` un giudizio su tutta la watchlist. A ogni scatto successivo,
+dentro il ciclo, si richiama il modello solo per gli asset della watchlist
+che non hanno ancora una decisione in quel run, aggiungendo le decisioni
+allo stesso run: le decisioni già prese, e i loro trade, non si ripetono.
+Al ciclo successivo si riparte da tutta la watchlist.
 
-L'errore su un asset è isolato e il giro prosegue. L'esito del giro è
-quello delle pipeline (`run_outcome`): `success`, `partial` (almeno una
-decisione fallita, fino al 50%), `failed` (oltre, o errore fuori dalle
-singole decisioni). Il prossimo giro è schedulato (`next_decision_at`,
-default +7 giorni) solo con `success`/`partial`: un giro `failed` lascia il
-portfolio dovuto, riprovato al prossimo scatto del timer orario, invece di
-fargli perdere una settimana in silenzio.
+L'esito del run si aggiorna a ogni tentativo, sugli asset ancora senza
+decisione rispetto all'intera watchlist (`run_outcome`, la stessa regola
+delle pipeline): `success` se non ne manca nessuno, `partial` fino al 50%,
+`failed` oltre o per un errore fuori dalle singole decisioni. Serve a
+sapere com'è andato il ciclo, non decide la cadenza.
+
+Un BUY/SELL viene eseguito subito, nella stessa transazione della decisione,
+all'ultimo prezzo noto nel contesto (mai un dato futuro) se non è più vecchio
+di `max_price_age`; altrimenti la decisione resta registrata ma il trade è
+saltato. La size è quella proposta dall'LLM. Le decisioni sono sequenziali:
+il cash disponibile per un asset tiene conto dei trade già fatti.
 
 Un portfolio va prima inizializzato (`initialize_portfolio`): sceglie la
-watchlist con `select_watchlist()` (un replace totale) e fa subito un primo
-giro di decisioni, così un portfolio appena attivato ha un giudizio su
-ogni asset che osserva.
+watchlist con `select_watchlist()` (un replace totale) e apre subito un
+ciclo.
 """
 
 from __future__ import annotations
@@ -63,6 +67,8 @@ class PortfolioRunResult:
     decisions_written: int = 0
     trades_executed: int = 0
     failures: list[str] = field(default_factory=list)
+    # "ciclo" (apertura di un ciclo) o "ripresa" (asset rimasti del ciclo in corso)
+    kind: str = "ciclo"
 
 
 class DecisionEngine:
@@ -86,34 +92,46 @@ class DecisionEngine:
     # --- punti d'ingresso ---------------------------------------------------
 
     def run_due(self, as_of: datetime | None = None) -> list[PortfolioRunResult]:
-        """Un giro per ogni portfolio dovuto ora; un errore su un portfolio non
-        blocca gli altri."""
+        """Per ogni portfolio attivo: apre un ciclo se è dovuto, altrimenti
+        riprende gli asset ancora senza decisione nel ciclo in corso, altrimenti
+        non fa nulla. Un errore su un portfolio non blocca gli altri."""
         as_of = as_of or self.clock()
-        portfolios = self.store.due_portfolios(as_of)
-        if not portfolios:
-            logger.info("nessun portfolio dovuto a %s", as_of.isoformat())
-            return []
-        logger.info("%d portfolio dovuti: %s", len(portfolios), ", ".join(p.name for p in portfolios))
-
         results = []
-        for portfolio in portfolios:
+        for portfolio in self.store.active_model_portfolios():
+            due = portfolio.next_decision_at is None or portfolio.next_decision_at <= as_of
             try:
-                provider = self._provider(portfolio)
                 watchlist = self.store.watchlist(portfolio.portfolio_id)
+                run_id = None
+                targets = watchlist
+                if not due:
+                    run = self.store.latest_run(portfolio.portfolio_id)
+                    if run is None:
+                        continue
+                    decided = self.store.decided_asset_ids(run.run_id)
+                    targets = [a for a in watchlist if a.asset_id not in decided]
+                    if not targets:
+                        continue
+                    run_id = run.run_id
+                provider = self._provider(portfolio)
             except Exception as exc:
                 logger.exception("portfolio %s: preparazione del giro fallita", portfolio.name)
                 results.append(
-                    PortfolioRunResult(portfolio.portfolio_id, None, "failed", 0, failures=[f"preparazione: {exc}"])
+                    PortfolioRunResult(
+                        portfolio.portfolio_id, None, "failed", 0,
+                        failures=[f"preparazione: {exc}"], kind="ciclo" if due else "ripresa",
+                    )
                 )
                 continue
-            results.append(self._run_portfolio(portfolio, watchlist, provider, as_of))
+            results.append(self._attempt(portfolio, watchlist, targets, provider, as_of, run_id=run_id))
+        if not results:
+            logger.info("niente da fare a %s: nessun ciclo dovuto né asset da riprendere", as_of.isoformat())
         return results
 
     def initialize_portfolio(self, portfolio_id: int) -> PortfolioRunResult:
-        """Bootstrap: sceglie la watchlist con `select_watchlist()` e fa subito
-        un primo giro di decisioni con lo stesso provider. Un `symbol` fuori
-        dall'universo viene scartato con un warning. Se la scelta della
-        watchlist fallisce l'eccezione si propaga: senza scope non c'è giro."""
+        """Bootstrap: sceglie la watchlist con `select_watchlist()` e apre subito
+        un ciclo con lo stesso provider. Un `symbol` fuori dall'universo viene
+        scartato con un warning. Se la scelta della watchlist fallisce
+        l'eccezione si propaga: senza scope non c'è ciclo."""
         portfolio = self.store.portfolio(portfolio_id)
         provider = self._provider(portfolio)
         context = self.store.bootstrap_context(portfolio_id)
@@ -130,17 +148,32 @@ class DecisionEngine:
         logger.info(
             "portfolio %s: watchlist di %d asset (%d proposti)", portfolio.name, len(watchlist), len(selection.symbols)
         )
-        return self._run_portfolio(portfolio, watchlist, provider, as_of)
+        return self._attempt(portfolio, watchlist, watchlist, provider, as_of)
 
-    # --- un giro --------------------------------------------------------------
+    # --- un tentativo ---------------------------------------------------------
 
-    def _run_portfolio(
-        self, portfolio: PortfolioRef, watchlist: list[AssetRef], provider: LLMProvider, as_of: datetime
+    def _attempt(
+        self,
+        portfolio: PortfolioRef,
+        watchlist: list[AssetRef],
+        targets: list[AssetRef],
+        provider: LLMProvider,
+        as_of: datetime,
+        *,
+        run_id: int | None = None,
     ) -> PortfolioRunResult:
-        result = PortfolioRunResult(portfolio.portfolio_id, None, "failed", len(watchlist))
+        """Apertura di un ciclo (`run_id=None`: nuovo run, prossimo ciclo
+        fissato subito) o ripresa del ciclo in corso (`run_id` del suo run):
+        decide sugli asset `targets` e aggiorna l'esito del run."""
+        kind = "ciclo" if run_id is None else "ripresa"
+        result = PortfolioRunResult(portfolio.portfolio_id, run_id, "failed", len(watchlist), kind=kind)
+        next_cycle = None
         try:
-            result.run_id = self.store.start_run(portfolio, as_of=as_of)
-            for asset in watchlist:
+            if result.run_id is None:
+                result.run_id = self.store.start_run(portfolio, as_of=as_of)
+                next_cycle = as_of + self.interval
+                self.store.schedule_next_decision(portfolio.portfolio_id, next_cycle)
+            for asset in targets:
                 try:
                     if self._decide_asset(portfolio, asset, provider, as_of, result.run_id):
                         result.trades_executed += 1
@@ -148,6 +181,8 @@ class DecisionEngine:
                 except Exception as exc:
                     logger.warning("portfolio %s, %s: decisione fallita: %s", portfolio.name, asset.symbol, exc)
                     result.failures.append(f"{asset.symbol}: {type(exc).__name__}: {exc}")
+            # Gli asset fuori da `targets` hanno già una decisione nel run:
+            # quelli ancora senza sono esattamente i falliti di questo tentativo.
             result.status = run_outcome(len(watchlist), len(result.failures), self.failure_threshold)
             message = self._failure_summary(result) if result.failures else None
         except Exception as exc:
@@ -155,27 +190,21 @@ class DecisionEngine:
             result.status = "failed"
             message = f"giro interrotto: {type(exc).__name__}: {exc}"
         except BaseException as exc:
-            # SIGTERM o simili: il run si chiude `failed`, poi l'interruzione
-            # si propaga (nessun altro portfolio deve partire).
+            # SIGTERM o simili: il run si chiude `failed` (verrà ripreso al
+            # prossimo scatto), poi l'interruzione si propaga.
             if result.run_id is not None:
                 self.store.finish_run(result.run_id, "failed", f"interrotto: {type(exc).__name__}: {exc}")
             raise
 
         if result.run_id is not None:
             self.store.finish_run(result.run_id, result.status, message)
-        if result.status in ("success", "partial"):
-            next_at = as_of + self.interval
-            self.store.schedule_next_decision(portfolio.portfolio_id, next_at)
-            schedule = f"prossimo giro {next_at.isoformat()}"
-        else:
-            schedule = "prossimo giro non schedulato: riprovato al prossimo scatto del timer"
         logger.info(
-            "portfolio %s, run %s: %s, %d/%d decisioni, %d trade; %s",
-            portfolio.name, result.run_id, result.status, result.decisions_written,
-            result.decisions_total, result.trades_executed, schedule,
+            "portfolio %s, run %s (%s): %s, %d/%d decisioni in questo tentativo, %d asset senza decisione, %d trade%s",
+            portfolio.name, result.run_id, kind, result.status, result.decisions_written, len(targets),
+            len(result.failures), result.trades_executed,
+            f"; prossimo ciclo {next_cycle.isoformat()}" if next_cycle else "",
         )
         return result
-
     def _decide_asset(
         self, portfolio: PortfolioRef, asset: AssetRef, provider: LLMProvider, as_of: datetime, run_id: int
     ) -> bool:
@@ -227,4 +256,4 @@ class DecisionEngine:
         shown = result.failures[:MAX_REPORTED_FAILURES]
         more = len(result.failures) - len(shown)
         suffix = f"; ... e altre {more}" if more else ""
-        return f"{len(result.failures)}/{result.decisions_total} decisioni fallite: " + "; ".join(shown) + suffix
+        return f"{len(result.failures)}/{result.decisions_total} asset senza decisione: " + "; ".join(shown) + suffix

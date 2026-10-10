@@ -180,18 +180,16 @@ class TestPortfolio:
             with pytest.raises(LookupError):
                 PortfolioRepository(tx).get(-1)
 
-    def test_portfolio_dovuti(self, full, app):
-        due_null = _portfolio(full, "test-de-null")
-        due_past = _portfolio(full, "test-de-past", next_decision_at=NOW - timedelta(hours=1))
-        future = _portfolio(full, "test-de-future", next_decision_at=NOW + timedelta(days=1))
+    def test_portfolio_model_attivi(self, full, app):
+        active = _portfolio(full, "test-de-active", next_decision_at=NOW + timedelta(days=1))
         inactive = _portfolio(full, "test-de-inactive", is_active=False)
         bench = _portfolio(full, "test-de-bench", portfolio_type="benchmark")
 
         with app.transaction() as tx:
-            due = {p.portfolio_id for p in PortfolioRepository(tx).due_model_portfolios(NOW)}
+            found = {p.portfolio_id: p for p in PortfolioRepository(tx).active_model_portfolios()}
 
-        assert {due_null, due_past} <= due
-        assert not {future, inactive, bench} & due
+        assert active in found and found[active].next_decision_at == NOW + timedelta(days=1)
+        assert not {inactive, bench} & set(found)
 
     def test_posizioni_e_watchlist_solo_del_portfolio(self, full, app):
         a, b = _asset(full, "TESTDE1"), _asset(full, "TESTDE2")
@@ -432,6 +430,35 @@ class FakeProvider:
         return WatchlistSelection(symbols=["TESTDE1", "TESTDE2"], reasoning="test")
 
 
+class TestDecisionRepositoryCicli:
+    def test_ultimo_run_e_asset_gia_decisi(self, full, app):
+        a, b = _asset(full, "TESTDE1"), _asset(full, "TESTDE2")
+        p = _portfolio(full, "test-de-1")
+        with app.transaction() as tx:
+            repo = DecisionRepository(tx)
+            assert repo.latest_run(p) is None
+            old = repo.create_run(portfolio_id=p, ts=NOW - timedelta(days=7), config={}, llm_provider="f", model_version="m")
+            current = repo.create_run(portfolio_id=p, ts=NOW, config={}, llm_provider="f", model_version="m")
+            repo.write_decision(run_id=old, asset_id=b, ts=NOW, decision=_decision(), context_snapshot={})
+            repo.write_decision(run_id=current, asset_id=a, ts=NOW, decision=_decision(), context_snapshot={})
+            latest = repo.latest_run(p)
+            decided = repo.decided_asset_ids(current)
+
+        assert latest.run_id == current
+        assert decided == {a}
+
+    def test_finish_run_senza_errore_cancella_quello_precedente(self, full, app):
+        p = _portfolio(full, "test-de-1")
+        with app.transaction() as tx:
+            repo = DecisionRepository(tx)
+            run_id = repo.create_run(portfolio_id=p, ts=NOW, config={}, llm_provider="f", model_version="m")
+            repo.finish_run(run_id, "partial", "1/2 asset senza decisione")
+            repo.finish_run(run_id, "success")
+            run = tx.repository(ModelRun).get_one(run_id=run_id)
+
+        assert (run.status, run.error_message) == ("success", None)
+
+
 class TestEngineEndToEnd:
     def _setup(self, full):
         a, b = _asset(full, "TESTDE1"), _asset(full, "TESTDE2")
@@ -439,16 +466,13 @@ class TestEngineEndToEnd:
         _prices(full, b, [(NOW - timedelta(days=6), 100.0)])  # troppo vecchio per un trade
         return _portfolio(full, "test-de-e2e", cash=1_000.0)
 
-    def _run(self, app, p, provider):
-        engine = DecisionEngine(PostgresDecisionStore(app), lambda name, model: provider, clock=lambda: NOW)
-        results = engine.run_due(as_of=NOW)
-        return next(r for r in results if r.portfolio_id == p)
+    def _engine(self, app, provider, now=NOW):
+        return DecisionEngine(PostgresDecisionStore(app), lambda name, model: provider, clock=lambda: now)
 
-    def test_bootstrap_poi_giro_dovuto(self, full, app):
+    def test_bootstrap_apre_un_ciclo(self, full, app):
         p = self._setup(full)
-        engine = DecisionEngine(PostgresDecisionStore(app), lambda name, model: FakeProvider(), clock=lambda: NOW)
 
-        result = engine.initialize_portfolio(p)
+        result = self._engine(app, FakeProvider()).initialize_portfolio(p)
 
         with full.session() as session:
             portfolio = session.get(Portfolio, p)
@@ -459,17 +483,38 @@ class TestEngineEndToEnd:
         assert len(positions) == 1
         assert portfolio.next_decision_at == NOW + timedelta(days=7)
 
-    def test_giro_tutto_fallito_resta_dovuto(self, full, app):
+    def test_ciclo_fallito_poi_ripreso_nello_stesso_run_senza_ripetere(self, full, app):
         p = self._setup(full)
         with app.transaction() as tx:
             PortfolioRepository(tx).replace_watchlist(p, [
-                a.asset_id for a in MarketContextRepository(tx).decision_universe() if a.symbol.startswith("TESTDE")
+                a.asset_id for a in MarketContextRepository(tx).decision_universe() if a.symbol in ("TESTDE1", "TESTDE2")
             ], added_at=NOW)
 
-        result = self._run(app, p, FakeProvider(fail=True))
+        class FailsOnTestde2(FakeProvider):
+            """Fallisce solo su TESTDE2, finché `fail` è vero."""
+
+            def decide(self, context):
+                if context["symbol"] == "TESTDE2" and self.fail:
+                    raise DecisionError("429 RESOURCE_EXHAUSTED")
+                return _decision(self.action, 0.5)
+
+        provider = FailsOnTestde2(fail=True)
+        first = next(r for r in self._engine(app, provider).run_due() if r.portfolio_id == p)
+        with full.session() as session:
+            after_first = (session.get(ModelRun, first.run_id).status, session.get(Portfolio, p).next_decision_at)
+
+        provider.fail = False
+        later = NOW + timedelta(hours=1)
+        retry = next(r for r in self._engine(app, provider, later).run_due() if r.portfolio_id == p)
 
         with full.session() as session:
-            run = session.get(ModelRun, result.run_id)
-            portfolio = session.get(Portfolio, p)
-        assert run.status == "failed" and "2/2 decisioni fallite" in run.error_message
-        assert portfolio.next_decision_at is None
+            run = session.get(ModelRun, first.run_id)
+            decisions = session.execute(select(ModelDecision).where(ModelDecision.run_id == first.run_id)).scalars().all()
+            cash = session.get(Portfolio, p).cash
+            runs = session.execute(select(ModelRun.run_id).where(ModelRun.portfolio_id == p)).scalars().all()
+        assert after_first == ("partial", NOW + timedelta(days=7))
+        assert (retry.kind, retry.run_id) == ("ripresa", first.run_id)
+        assert (run.status, run.error_message) == ("success", None)
+        assert len(decisions) == 2 and runs == [first.run_id]
+        # il BUY su TESTDE1 del primo tentativo non si ripete: un solo trade
+        assert cash == pytest.approx(500.0)

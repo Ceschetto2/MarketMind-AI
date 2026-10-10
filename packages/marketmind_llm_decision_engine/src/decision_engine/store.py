@@ -42,10 +42,22 @@ class TradeRequest:
     price: float
 
 
+@dataclass(frozen=True)
+class RunRef:
+    """Il run di un ciclo: `ts` è l'inizio del ciclo."""
+
+    run_id: int
+    ts: datetime
+
+
 class DecisionStore(Protocol):
     windows: ContextWindows
 
-    def due_portfolios(self, as_of: datetime) -> list[PortfolioRef]: ...
+    def active_model_portfolios(self) -> list[PortfolioRef]: ...
+
+    def latest_run(self, portfolio_id: int) -> RunRef | None: ...
+
+    def decided_asset_ids(self, run_id: int) -> set[int]: ...
 
     def portfolio(self, portfolio_id: int) -> PortfolioRef: ...
 
@@ -83,9 +95,18 @@ class PostgresDecisionStore:
         self.db = db
         self.windows = windows
 
-    def due_portfolios(self, as_of: datetime) -> list[PortfolioRef]:
+    def active_model_portfolios(self) -> list[PortfolioRef]:
         with self.db.transaction() as tx:
-            return [PortfolioRef.of(p) for p in PortfolioRepository(tx).due_model_portfolios(as_of)]
+            return [PortfolioRef.of(p) for p in PortfolioRepository(tx).active_model_portfolios()]
+
+    def latest_run(self, portfolio_id: int) -> RunRef | None:
+        with self.db.transaction() as tx:
+            run = DecisionRepository(tx).latest_run(portfolio_id)
+            return None if run is None else RunRef(run_id=run.run_id, ts=run.ts)
+
+    def decided_asset_ids(self, run_id: int) -> set[int]:
+        with self.db.transaction() as tx:
+            return DecisionRepository(tx).decided_asset_ids(run_id)
 
     def portfolio(self, portfolio_id: int) -> PortfolioRef:
         with self.db.transaction() as tx:

@@ -2,14 +2,19 @@
 
 Nessun DB, nessuna patch globale: il motore riceve uno store in memoria
 (`FakeStore`, che implementa `DecisionStore`) e una factory di provider
-finti. I casi riprendono il vecchio `test_engine.py` più quelli nuovi:
-esito del run, cadenza dopo un giro fallito, prezzo di esecuzione vecchio.
+finti.
+
+Il modello dei cicli: un ciclo è un solo run. All'apertura (portfolio
+dovuto) si crea il run, si fissa subito il prossimo ciclo a +intervallo e
+si decide su tutta la watchlist; a ogni scatto successivo, dentro il ciclo,
+si decide solo sugli asset della watchlist senza decisione in quel run,
+aggiungendo le decisioni allo stesso run.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -23,6 +28,7 @@ from marketmind_llm_decision_engine.decision_engine.schemas import (
     PortfolioState,
     PricePoint,
 )
+from marketmind_llm_decision_engine.decision_engine.store import RunRef
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
 from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 from marketmind_llm_decision_engine.repositories.market_context import AssetRef
@@ -36,8 +42,8 @@ MSFT = AssetRef(2, "MSFT", "Microsoft Corporation", "Technology", "equity")
 NVDA = AssetRef(3, "NVDA", "NVIDIA Corporation", "Technology", "equity")
 UNIVERSE = [AAPL, MSFT, NVDA]
 
-ALPHA = PortfolioRef(10, "alpha", "fake", "model-a")
-BETA = PortfolioRef(20, "beta", "fake", "model-b")
+ALPHA = PortfolioRef(10, "alpha", "fake", "model-a", next_decision_at=None)
+BETA = PortfolioRef(20, "beta", "fake", "model-b", next_decision_at=None)
 
 
 @dataclass
@@ -48,11 +54,12 @@ class RecordedDecision:
     decision: str
     trade: object
     context: dict
+    as_of: datetime
 
 
 @dataclass
 class FakeStore:
-    due: list[PortfolioRef] = field(default_factory=list)
+    portfolios: list[PortfolioRef] = field(default_factory=list)
     watchlists: dict[int, list[AssetRef]] = field(default_factory=dict)
     prices: dict[str, list[PricePoint]] = field(default_factory=dict)
     windows: ContextWindows = ContextWindows()
@@ -62,8 +69,8 @@ class FakeStore:
     replaced: dict[int, list[int]] = field(default_factory=dict)
     fail_watchlist_for: set[int] = field(default_factory=set)
 
-    def due_portfolios(self, as_of):
-        return list(self.due)
+    def active_model_portfolios(self):
+        return [replace(p, next_decision_at=self.scheduled.get(p.portfolio_id, p.next_decision_at)) for p in self.portfolios]
 
     def portfolio(self, portfolio_id):
         return next(p for p in (ALPHA, BETA) if p.portfolio_id == portfolio_id)
@@ -102,14 +109,25 @@ class FakeStore:
 
     def start_run(self, portfolio, *, as_of):
         run_id = len(self.runs) + 1
-        self.runs[run_id] = {"portfolio": portfolio, "as_of": as_of, "status": "running", "error": None}
+        self.runs[run_id] = {"portfolio_id": portfolio.portfolio_id, "ts": as_of, "status": "running", "error": None, "finishes": 0}
         return run_id
+
+    def latest_run(self, portfolio_id):
+        mine = [(rid, r) for rid, r in self.runs.items() if r["portfolio_id"] == portfolio_id]
+        if not mine:
+            return None
+        run_id, run = max(mine, key=lambda x: (x[1]["ts"], x[0]))
+        return RunRef(run_id=run_id, ts=run["ts"])
+
+    def decided_asset_ids(self, run_id):
+        return {a.asset_id for a in UNIVERSE for d in self.decisions if d.run_id == run_id and d.symbol == a.symbol}
 
     def finish_run(self, run_id, status, error_message=None):
         self.runs[run_id].update(status=status, error=error_message)
+        self.runs[run_id]["finishes"] += 1
 
     def record_decision(self, *, run_id, portfolio_id, asset, as_of, decision, context, trade):
-        self.decisions.append(RecordedDecision(run_id, portfolio_id, asset.symbol, decision.decision, trade, context))
+        self.decisions.append(RecordedDecision(run_id, portfolio_id, asset.symbol, decision.decision, trade, context, as_of))
         return trade is not None
 
     def schedule_next_decision(self, portfolio_id, at):
@@ -148,24 +166,32 @@ class Factory:
         return provider
 
 
-def _engine(store, providers, **kwargs):
+class Clock:
+    def __init__(self, now=NOW):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def _engine(store, providers, clock=None, **kwargs):
     factory = Factory(providers)
-    engine = DecisionEngine(store, factory, clock=lambda: NOW, interval=INTERVAL, **kwargs)
+    engine = DecisionEngine(store, factory, clock=clock or Clock(), interval=INTERVAL, **kwargs)
     return engine, factory
 
 
-class TestRunDue:
-    def test_nessun_portfolio_dovuto(self, caplog):
+class TestNuovoCiclo:
+    def test_niente_da_fare(self, caplog):
         caplog.set_level(logging.INFO)
-        store = FakeStore()
+        store = FakeStore(portfolios=[replace(ALPHA, next_decision_at=NOW + timedelta(days=1))])
         engine, _ = _engine(store, {})
 
         assert engine.run_due() == []
         assert store.runs == {}
-        assert "nessun portfolio dovuto" in caplog.text
+        assert "niente da fare" in caplog.text
 
-    def test_una_decisione_per_asset_per_portfolio_con_provider_proprio(self):
-        store = FakeStore(due=[ALPHA, BETA], watchlists={10: [AAPL, MSFT], 20: [NVDA]})
+    def test_un_run_per_portfolio_con_provider_proprio(self):
+        store = FakeStore(portfolios=[ALPHA, BETA], watchlists={10: [AAPL, MSFT], 20: [NVDA]})
         alpha, beta = FakeProvider(), FakeProvider()
         engine, factory = _engine(store, {"model-a": alpha, "model-b": beta})
 
@@ -173,67 +199,124 @@ class TestRunDue:
 
         assert factory.requested == [("fake", "model-a"), ("fake", "model-b")]
         assert alpha.calls == ["AAPL", "MSFT"] and beta.calls == ["NVDA"]
-        assert [(d.portfolio_id, d.symbol) for d in store.decisions] == [(10, "AAPL"), (10, "MSFT"), (20, "NVDA")]
-        assert [r.status for r in results] == ["success", "success"]
-        assert {r["status"] for r in store.runs.values()} == {"success"}
-
-    def test_run_per_portfolio_e_contesto_del_portfolio_giusto(self):
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL]})
-        engine, _ = _engine(store, {"model-a": FakeProvider()})
-
-        engine.run_due()
-
-        assert store.runs[1]["portfolio"] == ALPHA and store.runs[1]["as_of"] == NOW
+        assert [(d.run_id, d.symbol) for d in store.decisions] == [(1, "AAPL"), (1, "MSFT"), (2, "NVDA")]
+        assert [(r.status, r.kind) for r in results] == [("success", "ciclo"), ("success", "ciclo")]
         assert store.decisions[0].context["portfolio"]["portfolio_id"] == 10
 
-    def test_watchlist_vuota_crea_un_run_senza_decisioni(self):
-        store = FakeStore(due=[ALPHA], watchlists={10: []})
-        engine, _ = _engine(store, {"model-a": FakeProvider()})
-
-        [result] = engine.run_due()
-
-        assert (result.status, result.decisions_total) == ("success", 0)
-        assert store.decisions == [] and len(store.runs) == 1
-        assert store.scheduled[10] == NOW + INTERVAL
-
-
-class TestEsitoECadenza:
-    def test_una_decisione_fallita_e_partial_e_schedula(self):
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL, MSFT, NVDA]})
-        engine, _ = _engine(store, {"model-a": FakeProvider(failing={"MSFT"})})
-
-        [result] = engine.run_due()
-
-        assert result.status == "partial"
-        assert [d.symbol for d in store.decisions] == ["AAPL", "NVDA"]
-        assert store.runs[1]["status"] == "partial"
-        assert "1/3 decisioni fallite" in store.runs[1]["error"] and "500 INTERNAL" in store.runs[1]["error"]
-        assert store.scheduled[10] == NOW + INTERVAL
-
-    def test_tutte_fallite_e_failed_e_non_schedula(self):
-        """Il caso del 1 ottobre (Gemma in errore): prima il portfolio perdeva
-        una settimana in silenzio."""
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL, MSFT]})
+    def test_prossimo_ciclo_fissato_allapertura_anche_se_il_giro_fallisce(self):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
         engine, _ = _engine(store, {"model-a": FakeProvider(failing={"AAPL", "MSFT"})})
 
         [result] = engine.run_due()
 
         assert result.status == "failed"
+        assert store.scheduled[10] == NOW + INTERVAL
         assert store.runs[1]["status"] == "failed"
-        assert 10 not in store.scheduled
+        assert "2/2 asset senza decisione" in store.runs[1]["error"] and "500 INTERNAL" in store.runs[1]["error"]
 
+    def test_esito_partial_sulla_watchlist(self):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT, NVDA]})
+        engine, _ = _engine(store, {"model-a": FakeProvider(failing={"MSFT"})})
+
+        [result] = engine.run_due()
+
+        assert result.status == "partial"
+        assert "1/3 asset senza decisione" in store.runs[1]["error"]
+
+    def test_watchlist_vuota(self):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: []})
+        engine, _ = _engine(store, {"model-a": FakeProvider()})
+
+        [result] = engine.run_due()
+
+        assert (result.status, result.decisions_total) == ("success", 0)
+        assert store.scheduled[10] == NOW + INTERVAL
+
+    def test_next_decision_at_scaduto_apre_un_ciclo_nuovo(self):
+        store = FakeStore(portfolios=[replace(ALPHA, next_decision_at=NOW - timedelta(minutes=1))], watchlists={10: [AAPL]})
+        engine, _ = _engine(store, {"model-a": FakeProvider()})
+
+        [result] = engine.run_due()
+
+        assert result.kind == "ciclo" and len(store.runs) == 1
+
+
+class TestRipresa:
+    def test_ritenta_solo_gli_asset_senza_decisione_nello_stesso_run(self):
+        """Il caso del 10 ottobre: prima il retry rifaceva tutta la watchlist,
+        con decisioni e trade ripetuti (AAPL comprato e poi venduto)."""
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT, NVDA]})
+        provider = FakeProvider(decisions={"AAPL": "BUY"}, failing={"MSFT", "NVDA"})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + timedelta(hours=1)
+        provider.failing = {"NVDA"}
+        provider.calls.clear()
+        [retry] = engine.run_due()
+
+        assert provider.calls == ["MSFT", "NVDA"]
+        assert (retry.kind, retry.run_id) == ("ripresa", 1)
+        assert [d.symbol for d in store.decisions] == ["AAPL", "MSFT"]
+        assert [d.trade is not None for d in store.decisions if d.symbol == "AAPL"] == [True]
+        assert store.decisions[1].as_of == NOW + timedelta(hours=1)
+        assert retry.status == "partial" and store.runs[1]["status"] == "partial"
+        assert store.scheduled[10] == NOW + INTERVAL
+        assert len(store.runs) == 1
+
+    def test_ciclo_completato_diventa_success_e_poi_non_chiama_piu_il_modello(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        provider = FakeProvider(failing={"MSFT"})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + timedelta(hours=1)
+        provider.failing = set()
+        engine.run_due()
+        clock.now = NOW + timedelta(hours=2)
+        provider.calls.clear()
+        later = engine.run_due()
+
+        assert store.runs[1]["status"] == "success" and store.runs[1]["error"] is None
+        assert later == [] and provider.calls == []
+
+    def test_il_ciclo_successivo_riparte_da_tutta_la_watchlist(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        provider = FakeProvider(failing={"MSFT"})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + INTERVAL
+        provider.failing = set()
+        provider.calls.clear()
+        [result] = engine.run_due()
+
+        assert result.kind == "ciclo" and result.run_id == 2
+        assert provider.calls == ["AAPL", "MSFT"]
+        assert store.scheduled[10] == NOW + 2 * INTERVAL
+
+    def test_portfolio_mai_girato_e_non_dovuto_non_fa_nulla(self):
+        store = FakeStore(portfolios=[replace(ALPHA, next_decision_at=NOW + timedelta(days=2))], watchlists={10: [AAPL]})
+        engine, _ = _engine(store, {"model-a": FakeProvider()})
+
+        assert engine.run_due() == []
+
+
+class TestIsolamento:
     def test_errore_su_un_portfolio_non_blocca_gli_altri(self):
-        store = FakeStore(due=[ALPHA, BETA], watchlists={10: [AAPL], 20: [NVDA]}, fail_watchlist_for={10})
+        store = FakeStore(portfolios=[ALPHA, BETA], watchlists={10: [AAPL], 20: [NVDA]}, fail_watchlist_for={10})
         engine, _ = _engine(store, {"model-a": FakeProvider(), "model-b": FakeProvider()})
 
         results = engine.run_due()
 
         assert [(r.portfolio_id, r.status) for r in results] == [(10, "failed"), (20, "success")]
         assert [d.symbol for d in store.decisions] == ["NVDA"]
-        assert list(store.scheduled) == [20]
 
     def test_provider_non_costruibile_e_failed_senza_run(self):
-        store = FakeStore(due=[ALPHA, BETA], watchlists={10: [AAPL], 20: [NVDA]})
+        store = FakeStore(portfolios=[ALPHA, BETA], watchlists={10: [AAPL], 20: [NVDA]})
         engine, _ = _engine(store, {"model-a": ValueError("provider sconosciuto"), "model-b": FakeProvider()})
 
         results = engine.run_due()
@@ -246,21 +329,15 @@ class TestEsitoECadenza:
             def record_decision(self, **kwargs):
                 raise RuntimeError("scrittura fallita")
 
-        store = BrokenStore(due=[ALPHA], watchlists={10: [AAPL]})
+        store = BrokenStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
         engine, _ = _engine(store, {"model-a": FakeProvider()})
 
         [result] = engine.run_due()
 
         assert result.status == "failed"
         assert store.runs[1]["status"] == "failed"
-        assert 10 not in store.scheduled
 
-
-class TestInterruzione:
     def test_interruzione_chiude_il_run_failed_e_si_propaga(self):
-        """Un SIGTERM (BaseException) non è l'errore di una decisione: deve
-        chiudere il run `failed` invece di lasciarlo `running`, e propagarsi."""
-
         class Stop(BaseException):
             pass
 
@@ -268,20 +345,22 @@ class TestInterruzione:
             def decide(self, context):
                 raise Stop()
 
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
         engine, _ = _engine(store, {"model-a": Interrupting()})
 
         with pytest.raises(Stop):
             engine.run_due()
         assert store.runs[1]["status"] == "failed"
         assert "interrotto" in store.runs[1]["error"]
-        assert 10 not in store.scheduled
+        # Il prossimo ciclo era già fissato all'apertura: lo scatto successivo
+        # riprende il run invece di aprirne un secondo.
+        assert store.scheduled[10] == NOW + INTERVAL
 
 
 class TestTrade:
     def test_buy_e_sell_chiedono_un_trade_allultimo_prezzo(self):
         store = FakeStore(
-            due=[ALPHA],
+            portfolios=[ALPHA],
             watchlists={10: [AAPL, MSFT]},
             prices={"AAPL": [PricePoint(ts=NOW - timedelta(hours=3), close=90.0), PricePoint(ts=NOW - timedelta(hours=1), close=95.0)]},
         )
@@ -295,7 +374,7 @@ class TestTrade:
         assert result.trades_executed == 2
 
     def test_hold_non_chiede_un_trade(self):
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL]})
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
         engine, _ = _engine(store, {"model-a": FakeProvider()})
 
         engine.run_due()
@@ -303,7 +382,7 @@ class TestTrade:
         assert store.decisions[0].trade is None
 
     def test_nessun_prezzo_trade_saltato_decisione_registrata(self):
-        store = FakeStore(due=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": []})
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": []})
         engine, _ = _engine(store, {"model-a": FakeProvider(decisions={"AAPL": "BUY"})})
 
         [result] = engine.run_due()
@@ -313,7 +392,7 @@ class TestTrade:
 
     def test_prezzo_piu_vecchio_della_soglia_trade_saltato(self, caplog):
         store = FakeStore(
-            due=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": [PricePoint(ts=NOW - timedelta(days=4), close=95.0)]}
+            portfolios=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": [PricePoint(ts=NOW - timedelta(days=4), close=95.0)]}
         )
         engine, _ = _engine(store, {"model-a": FakeProvider(decisions={"AAPL": "BUY"})}, max_price_age=timedelta(days=3))
 
@@ -324,7 +403,7 @@ class TestTrade:
 
     def test_prezzo_del_weekend_entro_la_soglia_esegue(self):
         store = FakeStore(
-            due=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": [PricePoint(ts=NOW - timedelta(days=2, hours=12), close=95.0)]}
+            portfolios=[ALPHA], watchlists={10: [AAPL]}, prices={"AAPL": [PricePoint(ts=NOW - timedelta(days=2, hours=12), close=95.0)]}
         )
         engine, _ = _engine(store, {"model-a": FakeProvider(decisions={"AAPL": "BUY"})})
 
@@ -334,7 +413,7 @@ class TestTrade:
 
 
 class TestInitializePortfolio:
-    def test_watchlist_scelta_dal_provider_e_primo_giro(self):
+    def test_watchlist_scelta_dal_provider_e_primo_ciclo(self):
         store = FakeStore()
         provider = FakeProvider(selection=("MSFT", "AAPL"))
         engine, factory = _engine(store, {"model-a": provider})
@@ -344,7 +423,7 @@ class TestInitializePortfolio:
         assert store.replaced[10] == [2, 1]
         assert provider.calls == ["MSFT", "AAPL"]  # nell'ordine scelto dal provider
         assert factory.requested == [("fake", "model-a")]
-        assert result.status == "success"
+        assert (result.status, result.kind) == ("success", "ciclo")
         assert store.scheduled[10] == NOW + INTERVAL
 
     def test_symbol_fuori_universo_scartati(self, caplog):
@@ -377,11 +456,17 @@ class TestInitializePortfolio:
             engine.initialize_portfolio(10)
         assert store.replaced == {} and store.runs == {}
 
-    def test_primo_giro_con_decisioni_fallite_non_schedula(self):
-        store = FakeStore()
-        engine, _ = _engine(store, {"model-a": FakeProvider(failing={"AAPL", "MSFT"})})
+    def test_primo_ciclo_con_decisioni_fallite_viene_ripreso(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA])
+        provider = FakeProvider(failing={"AAPL"})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
 
-        result = engine.initialize_portfolio(10)
+        first = engine.initialize_portfolio(10)
+        clock.now = NOW + timedelta(hours=1)
+        provider.failing = set()
+        provider.calls.clear()
+        [retry] = engine.run_due()
 
-        assert result.status == "failed"
-        assert 10 not in store.scheduled
+        assert first.status == "partial"
+        assert provider.calls == ["AAPL"] and retry.run_id == first.run_id
