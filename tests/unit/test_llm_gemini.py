@@ -10,6 +10,9 @@ from __future__ import annotations
 import pytest
 
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
+import httpx
+from google.genai import errors
+
 from marketmind_llm_decision_engine.llm.gemini import GeminiProvider, _call_gemini
 from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
 
@@ -100,32 +103,155 @@ class TestDecide:
         assert "2026-09-01" in kwargs["prompt"]
 
 
-class TestCallGemiRetry:
-    def test_retries_and_eventually_succeeds(self, mocker):
-        mock_client = mocker.Mock()
-        mock_client.models.generate_content.side_effect = [
-            RuntimeError("transitorio"),
-            RuntimeError("transitorio"),
+def _api_error(cls, code: int, status: str):
+    return cls(code, {"error": {"code": code, "message": status, "status": status}})
+
+
+class TestCallGeminiRetry:
+    """Si riprova solo ciò che può risolversi da sé: 5xx e errori di rete.
+    Un 4xx (429 per quota giornaliera esaurita, 400, 404 di un modello
+    inesistente) non cambia riprovando, consumerebbe solo altra quota."""
+
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, mocker):
+        mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
+
+    def _call(self, client):
+        return _call_gemini(client, model="gemini-3.6-flash", prompt="ciao", response_schema=Decision)
+
+    @pytest.mark.parametrize(
+        "transient",
+        [
+            _api_error(errors.ServerError, 500, "INTERNAL"),
+            _api_error(errors.ServerError, 504, "DEADLINE_EXCEEDED"),
+            httpx.ConnectError("rete non raggiungibile"),
+            httpx.ReadTimeout("timeout"),
+        ],
+        ids=["500", "504", "connessione", "timeout"],
+    )
+    def test_errori_transitori_riprovati(self, mocker, transient):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [transient, _mock_response(mocker, '{"decision": "HOLD"}')]
+
+        assert self._call(client).text == '{"decision": "HOLD"}'
+        assert client.models.generate_content.call_count == 2
+
+    @pytest.mark.parametrize(
+        "permanent",
+        [
+            _api_error(errors.ClientError, 429, "RESOURCE_EXHAUSTED"),  # senza tempo indicato
+            _api_error(errors.ClientError, 400, "INVALID_ARGUMENT"),
+            _api_error(errors.ClientError, 404, "NOT_FOUND"),
+            RuntimeError("bug nel codice"),
+        ],
+        ids=["429", "400", "404", "altro"],
+    )
+    def test_errori_permanenti_non_riprovati(self, mocker, permanent):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = permanent
+
+        with pytest.raises(type(permanent)):
+            self._call(client)
+        assert client.models.generate_content.call_count == 1
+
+    def test_si_arrende_dopo_tre_tentativi(self, mocker):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = _api_error(errors.ServerError, 500, "INTERNAL")
+
+        with pytest.raises(errors.ServerError):
+            self._call(client)
+        assert client.models.generate_content.call_count == 3
+
+
+def _rate_limited(retry_delay: str | None, message_delay: str | None = None, quota_id: str = "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"):
+    message = "You exceeded your current quota."
+    if message_delay is not None:
+        message += f" Please retry in {message_delay}s."
+    details = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota_id}]}]
+    if retry_delay is not None:
+        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay})
+    return errors.ClientError(
+        429, {"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED", "details": details}}
+    )
+
+
+class TestRateLimit429:
+    """Un 429 con un tempo di attesa indicato da Google fino a 5 minuti (un
+    limite al minuto: richieste o token) viene atteso e riprovato; oltre
+    (la quota giornaliera, ~10 ore all'azzeramento) o senza un tempo
+    indicato resta definitivo."""
+
+    @pytest.fixture
+    def waits(self, mocker):
+        recorded: list[float] = []
+        mocker.patch.object(_call_gemini.retry, "sleep", recorded.append)
+        return recorded
+
+    def _call(self, client):
+        return _call_gemini(client, model="gemini-3.6-flash", prompt="ciao", response_schema=Decision)
+
+    def test_attende_il_retry_delay_e_riprova(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [_rate_limited("46s"), _mock_response(mocker, '{"decision": "HOLD"}')]
+
+        assert self._call(client).text == '{"decision": "HOLD"}'
+        assert waits == [pytest.approx(47.0)]
+
+    def test_retry_delay_frazionario(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [_rate_limited("2.5s"), _mock_response(mocker, '{"decision": "HOLD"}')]
+
+        self._call(client)
+
+        assert waits == [pytest.approx(3.5)]
+
+    def test_senza_retry_info_usa_il_tempo_nel_messaggio(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [
+            _rate_limited(None, message_delay="3.075421386"),
             _mock_response(mocker, '{"decision": "HOLD"}'),
         ]
-        mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
 
-        response = _call_gemini(
-            mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
+        self._call(client)
+
+        assert waits == [pytest.approx(4.075421386)]
+
+    def test_esattamente_cinque_minuti_attende(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = [_rate_limited("300s"), _mock_response(mocker, '{"decision": "HOLD"}')]
+
+        self._call(client)
+
+        assert waits == [pytest.approx(301.0)]
+
+    def test_oltre_cinque_minuti_non_riprova(self, mocker, waits):
+        """La quota giornaliera: Google indica l'attesa fino all'azzeramento."""
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = _rate_limited(
+            "36401s", quota_id="GenerateRequestsPerDayPerProjectPerModel-FreeTier"
         )
 
-        assert response.text == '{"decision": "HOLD"}'
-        assert mock_client.models.generate_content.call_count == 3
+        with pytest.raises(errors.ClientError):
+            self._call(client)
+        assert client.models.generate_content.call_count == 1
+        assert waits == []
 
-    def test_propagates_after_stop_after_attempt(self, mocker):
-        mock_client = mocker.Mock()
-        mock_client.models.generate_content.side_effect = RuntimeError("transitorio")
-        mocker.patch.object(_call_gemini.retry, "sleep", lambda _seconds: None)
+    def test_senza_tempo_indicato_non_riprova(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = _rate_limited(None)
 
-        with pytest.raises(RuntimeError):
-            _call_gemini(
-                mock_client, model="gemini-2.5-flash", prompt="ciao", response_schema=Decision
-            )
+        with pytest.raises(errors.ClientError):
+            self._call(client)
+        assert client.models.generate_content.call_count == 1
+
+    def test_si_arrende_dopo_i_tentativi_massimi(self, mocker, waits):
+        client = mocker.Mock()
+        client.models.generate_content.side_effect = _rate_limited("5s")
+
+        with pytest.raises(errors.ClientError):
+            self._call(client)
+        assert client.models.generate_content.call_count == 3
+        assert len(waits) == 2
 
 
 class TestSelectWatchlist:

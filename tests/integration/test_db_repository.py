@@ -185,6 +185,29 @@ class TestLettureEScritture:
             assert tx.repository(Asset).get_one(symbol="NON-ESISTE-XYZ") is None
 
 
+class TestLatestPer:
+    def test_ultima_riga_per_indicatore_fino_a_una_data(self, db):
+        rows = [
+            {"indicator": ind, "ts": ts, "value": v, "source": "test", "fetched_at": _NOW}
+            for ind, ts, v in [
+                ("TESTREPO_A", date(2026, 7, 1), 1.0),
+                ("TESTREPO_A", date(2026, 8, 1), 2.0),
+                ("TESTREPO_A", date(2026, 9, 1), 3.0),
+                ("TESTREPO_B", date(2026, 6, 1), 10.0),
+            ]
+        ]
+        with db.transaction() as tx:
+            macro = tx.repository(MacroEvent)
+            macro.insert(rows)
+            latest = macro.latest_per(
+                ("indicator",),
+                order_by="ts",
+                where=[MacroEvent.indicator.in_(["TESTREPO_A", "TESTREPO_B"]), MacroEvent.ts <= date(2026, 8, 15)],
+            )
+
+        assert sorted((r.indicator, r.value) for r in latest) == [("TESTREPO_A", 2.0), ("TESTREPO_B", 10.0)]
+
+
 class TestDatabase:
     def test_statement_timeout_interrompe_query_lente(self, db):
         slow = Database(DatabaseSettings(url="unused", statement_timeout_ms=50), policy=INGESTION, bind=db.bind)
@@ -279,3 +302,37 @@ class TestIngestionRunAudit:
 
         with db.session() as session:
             assert session.get(IngestionRun, run.run_id).status == "partial"
+
+    def test_chiude_i_run_orfani_della_stessa_pipeline(self, db):
+        """Un run rimasto `running` (macchina spenta a metà run, come
+        `gdelt-ngrams` il 10 ottobre alle 13:37) viene chiuso `failed`
+        all'avvio del run successivo della stessa pipeline. Restano
+        intatti un run recente della stessa pipeline e quelli di un'altra
+        pipeline con lo stesso `source` (yfinance ha prezzi e anagrafica)."""
+        now = datetime.now(timezone.utc)
+
+        def running(target: str, hours_ago: float) -> int:
+            with db.transaction() as tx:
+                [row] = tx.repository(IngestionRun).insert_returning(
+                    [{"source": "yfinance", "target_table": target, "status": "running",
+                      "started_at": now - timedelta(hours=hours_ago)}],
+                    returning=("run_id",),
+                )
+            return row["run_id"]
+
+        stale = running("market_data.t_market_prices", 7)
+        recent = running("market_data.t_market_prices", 1)
+        other_pipeline = running("market_data.t_assets", 7)
+
+        with IngestionRunAudit(db, "yfinance", "market_data.t_market_prices") as run:
+            pass
+
+        with db.session() as session:
+            statuses = {r: session.get(IngestionRun, r) for r in (stale, recent, other_pipeline, run.run_id)}
+        assert statuses[stale].status == "failed"
+        assert "terminato senza chiudere" in statuses[stale].error_message
+        assert statuses[stale].finished_at is not None
+        assert statuses[recent].status == "running"
+        assert statuses[other_pipeline].status == "running"
+        assert statuses[run.run_id].status == "success"
+

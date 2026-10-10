@@ -64,15 +64,25 @@ def parse_ngrams(text: str) -> list[tuple[str, str, str]]:
 
 
 def parse_toc(text: str) -> dict[str, dict]:
+    """`ID` → metadati articolo. Una riga JSON malformata (troncata) o senza
+    `ID` viene saltata con un warning, come le righe malformate di
+    `parse_ngrams`: altrimenti una sola riga rotta nel file pubblicato da
+    GDELT fa perdere tutti gli articoli del run."""
     if not text:
         return {}
     toc = {}
+    skipped = 0
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        record = json.loads(line)
-        toc[str(record["ID"])] = record
+        try:
+            record = json.loads(line)
+            toc[str(record["ID"])] = record
+        except (json.JSONDecodeError, KeyError, TypeError):
+            skipped += 1
+    if skipped:
+        logger.warning("toc.json: %d righe malformate saltate", skipped)
     return toc
 
 

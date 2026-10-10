@@ -1,261 +1,259 @@
-"""Il loop del motore decisionale: un run indipendente per ciascun portfolio
-'model' attivo, ciascuno con il proprio provider — mai condividono stato.
+"""Il loop del motore decisionale, a cicli: per ciascun portfolio `model`
+attivo, indipendente dagli altri e col proprio provider LLM.
 
-Un portfolio non parte con lo scope dell'intero universo: va prima
-inizializzato (`initialize_portfolio()`). Il bootstrap non si ferma alla
-scelta degli asset da osservare (`select_watchlist()`, non `decide()`): si
-conclude con un primo giro di `decide()` sulla watchlist appena scelta,
-nello stesso passo — un portfolio appena attivato ha subito un giudizio
-(anche HOLD, se il modello preferisce aspettare) su ogni asset che osserva,
-non aspetta il prossimo giro dovuto. `run_due_decisions()` gira sulla
-stessa watchlist (`get_watchlist`, non più l'universo condiviso); un
-portfolio mai inizializzato ha una watchlist vuota e il suo run produce
-zero decisioni, non un errore.
+Un ciclo è un solo run (`t_model_runs`), il cui `ts` è l'inizio del ciclo.
+Quando il portfolio è dovuto (`next_decision_at` nullo o scaduto) si apre un
+ciclo: si crea il run, si fissa subito il prossimo ciclo a `ts` +
+`interval` (prima di decidere: se il processo muore a metà, lo scatto
+successivo riprende questo ciclo invece di aprirne un altro) e si chiede a
+`decide()` un giudizio su tutta la watchlist. A ogni scatto successivo,
+dentro il ciclo, si richiama il modello solo per gli asset della watchlist
+che non hanno ancora una decisione in quel run, aggiungendo le decisioni
+allo stesso run: le decisioni già prese, e i loro trade, non si ripetono.
+Al ciclo successivo si riparte da tutta la watchlist.
 
-Un `BUY`/`SELL` non resta solo un giudizio: viene eseguito subito
-(`execute_trade`, `db/portfolio_writer.py`) nella stessa transazione della
-`ModelDecision` — cash e posizione si aggiornano nello stesso passo in cui
-la decisione si registra, mai in un secondo momento da un Backtesting
-Engine. La size del trade (`decision.size_pct`) è proposta dall'LLM
-stesso, non una regola deterministica qui dentro. Il prezzo di esecuzione
-è l'ultimo noto nel context package (`context.prices[-1]`, mai un dato
-futuro); se il context non ha prezzi per l'asset, il trade è saltato con
-un warning, non un errore che blocca il run.
+L'esito del run si aggiorna a ogni tentativo, sugli asset ancora senza
+decisione rispetto all'intera watchlist (`run_outcome`, la stessa regola
+delle pipeline): `success` se non ne manca nessuno, `partial` fino al 50%,
+`failed` oltre o per un errore fuori dalle singole decisioni. Serve a
+sapere com'è andato il ciclo, non decide la cadenza.
 
-Cadenza per-portfolio, non un timer per-portfolio: dopo ogni giro (bootstrap
-incluso) il motore schedula da sé quando tornare a girare per quel
-portfolio (`t_portfolios.next_decision_at`, `schedule_next_decision()`,
-default `DEFAULT_DECISION_INTERVAL`) — un timer condiviso invoca
-`run_due_decisions()` a intervalli più fitti del default (`decision_engine/
-pipeline.py`, entry point standalone) e questa funzione filtra da sola chi è
-davvero scaduto (`get_due_model_portfolios`), non chi è "attivo" in
-generale. Il campo esiste apposta perché il motore possa scrivere un
-prossimo giro diverso dal default per un singolo portfolio, in futuro anche
-in risposta a un rinvio dell'LLM (`Decision.defer`, non ancora collegato).
-Dettaglio in `Market Mind AI - Docs/Decision Engine/05_timer_e_cadenza.md`.
+Un BUY/SELL viene eseguito subito, nella stessa transazione della decisione,
+all'ultimo prezzo noto nel contesto (mai un dato futuro) se non è più vecchio
+di `max_price_age`; altrimenti la decisione resta registrata ma il trade è
+saltato. La size è quella proposta dall'LLM. Le decisioni sono sequenziali:
+il cash disponibile per un asset tiene conto dei trade già fatti.
+
+Un portfolio va prima inizializzato (`initialize_portfolio`): sceglie la
+watchlist con `select_watchlist()` (un replace totale) e apre subito un
+ciclo.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from marketmind_llm_decision_engine.repositories.context_reader import get_decision_universe
-from marketmind_llm_decision_engine.repositories.decision_writer import create_model_run, write_model_decision
-from marketmind_db.models.market_data import Asset
-from marketmind_db.models.portfolio import Portfolio
-from marketmind_llm_decision_engine.repositories.portfolio_reader import (
-    get_due_model_portfolios,
-    get_portfolio,
-    get_watchlist,
-)
-from marketmind_llm_decision_engine.repositories.portfolio_writer import execute_trade, schedule_next_decision, write_watchlist
-from marketmind_db.session import get_session, track_model_run
-from marketmind_llm_decision_engine.decision_engine.context_builder import (
-    DEFAULT_COMPANY_EVENT_DAYS_BACK,
-    DEFAULT_NEWS_DAYS_BACK,
-    DEFAULT_NEWS_MAX_ITEMS,
-    DEFAULT_PRICE_DAYS_BACK,
-    build_bootstrap_context,
-    build_context,
-)
+from marketmind_db.audit import DEFAULT_FAILURE_THRESHOLD, RunStatus, run_outcome
+from marketmind_llm_decision_engine.decision_engine.schemas import DecisionContext
+from marketmind_llm_decision_engine.decision_engine.store import DecisionStore, TradeRequest
 from marketmind_llm_decision_engine.llm.base import LLMProvider
-from marketmind_llm_decision_engine.llm.exceptions import DecisionError
-from marketmind_llm_decision_engine.llm.factory import get_provider
+from marketmind_llm_decision_engine.repositories.market_context import AssetRef
+from marketmind_llm_decision_engine.repositories.portfolio import PortfolioRef
 
 logger = logging.getLogger(__name__)
 
-# Default della cadenza per-portfolio (§ "Cadenza e storico" in CLAUDE.md):
-# non un cron fisso, un valore di partenza che il motore scrive su
-# `next_decision_at` a ogni giro e potrà un giorno sovrascrivere con un
-# intervallo diverso per un singolo portfolio.
 DEFAULT_DECISION_INTERVAL = timedelta(days=7)
+# Un trade non si esegue su una barra più vecchia di così: copre il weekend
+# (venerdì sera → lunedì mattina), non un'ingestion ferma da giorni.
+DEFAULT_MAX_PRICE_AGE = timedelta(days=3)
+MAX_REPORTED_FAILURES = 20
+
+ProviderFactory = Callable[[str, str], LLMProvider]
 
 
-def initialize_portfolio(portfolio_id: int) -> None:
-    """Bootstrap di un portfolio, in due passi nello stesso giro.
-
-    Primo: sceglie lo scope di asset di questo portfolio con un'unica
-    chiamata `select_watchlist()` (l'universo intero + la strategia del
-    portfolio), poi sostituisce la sua watchlist con la selezione — un
-    replace totale, non un merge (`write_watchlist`). Un `symbol`
-    restituito dal modello che non corrisponde a nessun asset dell'universo
-    viene scartato con un warning, non propagato.
-
-    Secondo: gira subito un primo `_run_for_portfolio()` sulla watchlist
-    appena scelta, riusando lo stesso `provider` — un portfolio appena
-    attivato non aspetta il prossimo giro dovuto per avere un primo
-    giudizio su ciò che osserva. Al termine, schedula anche il prossimo
-    giro (`_schedule_next_run`, default `DEFAULT_DECISION_INTERVAL`): un
-    portfolio bootstrappato è da subito "non scaduto", non riprocessato dal
-    timer condiviso al giro immediatamente successivo.
-
-    Se il bootstrap stesso fallisce (`select_watchlist()` solleva
-    `DecisionError`), l'eccezione si propaga: senza uno scope non c'è
-    nessun primo round da fare.
-    """
-    with get_session() as session:
-        portfolio = get_portfolio(session, portfolio_id)
-        context = build_bootstrap_context(session, portfolio_id)
-        universe_by_symbol = {a.symbol: a for a in get_decision_universe(session)}
-
-    provider = get_provider(name=portfolio.llm_provider, model=portfolio.model_version, api_key=None)
-
-    try:
-        selection = provider.select_watchlist(context.model_dump(mode="json"))
-    except DecisionError:
-        logger.exception("bootstrap fallito per il portfolio %s", portfolio_id)
-        raise
-
-    resolved_assets: list[Asset] = []
-    for symbol in selection.symbols:
-        asset = universe_by_symbol.get(symbol)
-        if asset is None:
-            logger.warning(
-                "select_watchlist ha restituito %r, non nell'universo — scartato", symbol
-            )
-            continue
-        resolved_assets.append(asset)
-
-    with get_session() as session:
-        write_watchlist(
-            session,
-            portfolio_id,
-            [a.asset_id for a in resolved_assets],
-            added_at=datetime.now(timezone.utc),
-        )
-
-    logger.info(
-        "bootstrap completato per il portfolio %d: %d/%d symbol validi",
-        portfolio_id,
-        len(resolved_assets),
-        len(selection.symbols),
-    )
-
-    as_of = datetime.now(timezone.utc)
-    _run_for_portfolio(portfolio, resolved_assets, provider, as_of)
-    _schedule_next_run(portfolio_id, as_of)
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def run_due_decisions(as_of: datetime | None = None) -> None:
-    """Un ciclo completo: un run indipendente per ogni portfolio 'model'
-    attivo il cui giro è dovuto ORA (`get_due_model_portfolios` — non
-    "attivo" in generale, ma "scaduto": `next_decision_at` nullo o
-    `<= as_of`), scoperto sulla propria watchlist (`get_watchlist`), non
-    sull'intero universo. Un errore isolato a un portfolio — nella
-    creazione del provider o in una singola decisione — non blocca gli
-    altri portfolio: ciascuno gira nel proprio `try` a sé, e un fallimento
-    non fa avanzare `next_decision_at`: il portfolio resta "scaduto" e
-    riprovato al prossimo giro del timer condiviso, non perso per una
-    settimana.
-    """
-    as_of = as_of or datetime.now(timezone.utc)
-
-    with get_session() as session:
-        portfolios = get_due_model_portfolios(session, as_of)
-
-    for portfolio in portfolios:
-        try:
-            provider = get_provider(
-                name=portfolio.llm_provider, model=portfolio.model_version, api_key=None
-            )
-            with get_session() as session:
-                watchlist = get_watchlist(session, portfolio.portfolio_id)
-            _run_for_portfolio(portfolio, watchlist, provider, as_of)
-            _schedule_next_run(portfolio.portfolio_id, as_of)
-        except Exception:
-            logger.exception("run fallito per il portfolio %s, salto", portfolio.portfolio_id)
+@dataclass
+class PortfolioRunResult:
+    portfolio_id: int
+    run_id: int | None
+    status: RunStatus
+    decisions_total: int
+    decisions_written: int = 0
+    trades_executed: int = 0
+    failures: list[str] = field(default_factory=list)
+    # "ciclo" (apertura di un ciclo) o "ripresa" (asset rimasti del ciclo in corso)
+    kind: str = "ciclo"
 
 
-def _schedule_next_run(portfolio_id: int, as_of: datetime) -> None:
-    next_decision_at = as_of + DEFAULT_DECISION_INTERVAL
-    with get_session() as session:
-        schedule_next_decision(session, portfolio_id, next_decision_at)
-    logger.info(
-        "portfolio %d: prossimo giro schedulato per %s", portfolio_id, next_decision_at
-    )
+class DecisionEngine:
+    def __init__(
+        self,
+        store: DecisionStore,
+        provider_factory: ProviderFactory,
+        *,
+        clock: Callable[[], datetime] = _utcnow,
+        interval: timedelta = DEFAULT_DECISION_INTERVAL,
+        max_price_age: timedelta = DEFAULT_MAX_PRICE_AGE,
+        failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
+    ) -> None:
+        self.store = store
+        self.provider_factory = provider_factory
+        self.clock = clock
+        self.interval = interval
+        self.max_price_age = max_price_age
+        self.failure_threshold = failure_threshold
 
+    # --- punti d'ingresso ---------------------------------------------------
 
-def _run_for_portfolio(
-    portfolio: Portfolio, watchlist: list[Asset], provider: LLMProvider, as_of: datetime
-) -> None:
-    run_id = _create_run(portfolio, as_of)
-
-    decisions_written = 0
-    # track_model_run: ogni get_session() aperta qui dentro imposta da sé
-    # marketmind.model_run_id, così i trigger di snapshot del portfolio
-    # (db/session.py) collegano cash/posizione a questo run — necessario
-    # per il Backtesting Engine, che isola i trade di un run tramite quel
-    # collegamento (Market Mind AI - Docs/Backtest/00_motore_backtest.md).
-    with track_model_run(run_id):
-        for asset in watchlist:
-            with get_session() as session:
-                context = build_context(
-                    session, asset.asset_id, asset.symbol, portfolio_id=portfolio.portfolio_id, as_of=as_of
-                )
-
+    def run_due(self, as_of: datetime | None = None) -> list[PortfolioRunResult]:
+        """Per ogni portfolio attivo: apre un ciclo se è dovuto, altrimenti
+        riprende gli asset ancora senza decisione nel ciclo in corso, altrimenti
+        non fa nulla. Un errore su un portfolio non blocca gli altri."""
+        as_of = as_of or self.clock()
+        results = []
+        for portfolio in self.store.active_model_portfolios():
+            due = portfolio.next_decision_at is None or portfolio.next_decision_at <= as_of
             try:
-                decision = provider.decide(context.model_dump(mode="json"))
-            except DecisionError:
-                logger.warning(
-                    "decisione fallita per %s (portfolio %s), salto",
-                    asset.symbol,
-                    portfolio.portfolio_id,
+                watchlist = self.store.watchlist(portfolio.portfolio_id)
+                run_id = None
+                targets = watchlist
+                if not due:
+                    run = self.store.latest_run(portfolio.portfolio_id)
+                    if run is None:
+                        continue
+                    decided = self.store.decided_asset_ids(run.run_id)
+                    targets = [a for a in watchlist if a.asset_id not in decided]
+                    if not targets:
+                        continue
+                    run_id = run.run_id
+                provider = self._provider(portfolio)
+            except Exception as exc:
+                logger.exception("portfolio %s: preparazione del giro fallita", portfolio.name)
+                results.append(
+                    PortfolioRunResult(
+                        portfolio.portfolio_id, None, "failed", 0,
+                        failures=[f"preparazione: {exc}"], kind="ciclo" if due else "ripresa",
+                    )
                 )
                 continue
+            results.append(self._attempt(portfolio, watchlist, targets, provider, as_of, run_id=run_id))
+        if not results:
+            logger.info("niente da fare a %s: nessun ciclo dovuto né asset da riprendere", as_of.isoformat())
+        return results
 
-            with get_session() as session:
-                write_model_decision(
-                    session,
-                    run_id=run_id,
-                    asset_id=asset.asset_id,
-                    ts=as_of,
-                    decision=decision,
-                    context_snapshot=context.model_dump(mode="json"),
-                )
-                if decision.decision in ("BUY", "SELL"):
-                    if context.prices:
-                        execute_trade(
-                            session,
-                            portfolio.portfolio_id,
-                            asset.asset_id,
-                            decision,
-                            price=context.prices[-1].close,
-                        )
-                    else:
-                        logger.warning(
-                            "nessun prezzo disponibile per %s (portfolio %s), trade non eseguito",
-                            asset.symbol,
-                            portfolio.portfolio_id,
-                        )
-            decisions_written += 1
+    def initialize_portfolio(self, portfolio_id: int) -> PortfolioRunResult:
+        """Bootstrap: sceglie la watchlist con `select_watchlist()` e apre subito
+        un ciclo con lo stesso provider. Un `symbol` fuori dall'universo viene
+        scartato con un warning. Se la scelta della watchlist fallisce
+        l'eccezione si propaga: senza scope non c'è ciclo."""
+        portfolio = self.store.portfolio(portfolio_id)
+        provider = self._provider(portfolio)
+        context = self.store.bootstrap_context(portfolio_id)
+        selection = provider.select_watchlist(context.model_dump(mode="json"))
 
-    logger.info(
-        "run %d (portfolio %d) completato: %d/%d decisioni scritte",
-        run_id,
-        portfolio.portfolio_id,
-        decisions_written,
-        len(watchlist),
-    )
+        universe = {a.symbol: a for a in self.store.decision_universe()}
+        unknown = [s for s in selection.symbols if s not in universe]
+        if unknown:
+            logger.warning("select_watchlist: symbol fuori universo scartati: %s", ", ".join(unknown))
+        watchlist = list({s: universe[s] for s in selection.symbols if s in universe}.values())
 
-
-def _create_run(portfolio: Portfolio, as_of: datetime) -> int:
-    # Le finestre sono ancora quelle di default di context_builder — nessuna
-    # personalizzazione per-portfolio oggi; registrate comunque per audit,
-    # così un futuro run con finestre diverse resta distinguibile a
-    # posteriori.
-    config = {
-        "price_days_back": DEFAULT_PRICE_DAYS_BACK,
-        "news_days_back": DEFAULT_NEWS_DAYS_BACK,
-        "news_max_items": DEFAULT_NEWS_MAX_ITEMS,
-        "company_event_days_back": DEFAULT_COMPANY_EVENT_DAYS_BACK,
-    }
-    with get_session() as session:
-        return create_model_run(
-            session,
-            portfolio_id=portfolio.portfolio_id,
-            ts=as_of,
-            config=config,
-            llm_provider=portfolio.llm_provider,
-            model_version=portfolio.model_version,
+        as_of = self.clock()
+        self.store.replace_watchlist(portfolio_id, [a.asset_id for a in watchlist], added_at=as_of)
+        logger.info(
+            "portfolio %s: watchlist di %d asset (%d proposti)", portfolio.name, len(watchlist), len(selection.symbols)
         )
+        return self._attempt(portfolio, watchlist, watchlist, provider, as_of)
+
+    # --- un tentativo ---------------------------------------------------------
+
+    def _attempt(
+        self,
+        portfolio: PortfolioRef,
+        watchlist: list[AssetRef],
+        targets: list[AssetRef],
+        provider: LLMProvider,
+        as_of: datetime,
+        *,
+        run_id: int | None = None,
+    ) -> PortfolioRunResult:
+        """Apertura di un ciclo (`run_id=None`: nuovo run, prossimo ciclo
+        fissato subito) o ripresa del ciclo in corso (`run_id` del suo run):
+        decide sugli asset `targets` e aggiorna l'esito del run."""
+        kind = "ciclo" if run_id is None else "ripresa"
+        result = PortfolioRunResult(portfolio.portfolio_id, run_id, "failed", len(watchlist), kind=kind)
+        next_cycle = None
+        try:
+            if result.run_id is None:
+                result.run_id = self.store.start_run(portfolio, as_of=as_of)
+                next_cycle = as_of + self.interval
+                self.store.schedule_next_decision(portfolio.portfolio_id, next_cycle)
+            for asset in targets:
+                try:
+                    if self._decide_asset(portfolio, asset, provider, as_of, result.run_id):
+                        result.trades_executed += 1
+                    result.decisions_written += 1
+                except Exception as exc:
+                    logger.warning("portfolio %s, %s: decisione fallita: %s", portfolio.name, asset.symbol, exc)
+                    result.failures.append(f"{asset.symbol}: {type(exc).__name__}: {exc}")
+            # Gli asset fuori da `targets` hanno già una decisione nel run:
+            # quelli ancora senza sono esattamente i falliti di questo tentativo.
+            result.status = run_outcome(len(watchlist), len(result.failures), self.failure_threshold)
+            message = self._failure_summary(result) if result.failures else None
+        except Exception as exc:
+            logger.exception("portfolio %s: giro interrotto", portfolio.name)
+            result.status = "failed"
+            message = f"giro interrotto: {type(exc).__name__}: {exc}"
+        except BaseException as exc:
+            # SIGTERM o simili: il run si chiude `failed` (verrà ripreso al
+            # prossimo scatto), poi l'interruzione si propaga.
+            if result.run_id is not None:
+                self.store.finish_run(result.run_id, "failed", f"interrotto: {type(exc).__name__}: {exc}")
+            raise
+
+        if result.run_id is not None:
+            self.store.finish_run(result.run_id, result.status, message)
+        logger.info(
+            "portfolio %s, run %s (%s): %s, %d/%d decisioni in questo tentativo, %d asset senza decisione, %d trade%s",
+            portfolio.name, result.run_id, kind, result.status, result.decisions_written, len(targets),
+            len(result.failures), result.trades_executed,
+            f"; prossimo ciclo {next_cycle.isoformat()}" if next_cycle else "",
+        )
+        return result
+    def _decide_asset(
+        self, portfolio: PortfolioRef, asset: AssetRef, provider: LLMProvider, as_of: datetime, run_id: int
+    ) -> bool:
+        context = self.store.decision_context(asset, portfolio_id=portfolio.portfolio_id, as_of=as_of)
+        payload = context.model_dump(mode="json")
+        decision = provider.decide(payload)
+        trade = self._trade_request(portfolio, asset, decision.decision, decision.size_pct, context, as_of)
+        return self.store.record_decision(
+            run_id=run_id,
+            portfolio_id=portfolio.portfolio_id,
+            asset=asset,
+            as_of=as_of,
+            decision=decision,
+            context=payload,
+            trade=trade,
+        )
+
+    def _trade_request(
+        self,
+        portfolio: PortfolioRef,
+        asset: AssetRef,
+        action: str,
+        size_pct: float | None,
+        context: DecisionContext,
+        as_of: datetime,
+    ) -> TradeRequest | None:
+        if action not in ("BUY", "SELL"):
+            return None
+        if not context.prices:
+            logger.warning("portfolio %s, %s: nessun prezzo nel contesto, trade %s saltato", portfolio.name, asset.symbol, action)
+            return None
+        last = context.prices[-1]
+        age = as_of - last.ts
+        if age > self.max_price_age:
+            logger.warning(
+                "portfolio %s, %s: ultimo prezzo vecchio di %s (oltre %s), trade %s saltato",
+                portfolio.name, asset.symbol, age, self.max_price_age, action,
+            )
+            return None
+        return TradeRequest(action=action, size_pct=size_pct, price=last.close)
+
+    def _provider(self, portfolio: PortfolioRef) -> LLMProvider:
+        if not portfolio.llm_provider or not portfolio.model_version:
+            raise ValueError(f"portfolio {portfolio.name}: llm_provider/model_version non impostati")
+        return self.provider_factory(portfolio.llm_provider, portfolio.model_version)
+
+    @staticmethod
+    def _failure_summary(result: PortfolioRunResult) -> str:
+        shown = result.failures[:MAX_REPORTED_FAILURES]
+        more = len(result.failures) - len(shown)
+        suffix = f"; ... e altre {more}" if more else ""
+        return f"{len(result.failures)}/{result.decisions_total} asset senza decisione: " + "; ".join(shown) + suffix

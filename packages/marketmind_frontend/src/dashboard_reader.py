@@ -5,8 +5,8 @@ SQLAlchemy proprio. Il modulo vive nel pacchetto `marketmind_frontend`, non
 in `marketmind_db` (che contiene solo lo strato generico) né nel pacchetto
 del Decision Engine: la dashboard non dipende da
 `marketmind_llm_decision_engine`, quindi `get_portfolio_positions()`/
-`get_watchlist()` sono qui accanto alle omonime del Decision Engine
-(`repositories/portfolio_reader.py`), non importate da lì.
+`get_watchlist()` sono qui, non importate dal `PortfolioRepository` del
+Decision Engine.
 
 `get_cash_history()` legge `t_portfolio_snapshots`, non `t_portfolio_
 positions`/`t_portfolio_position_snapshots`: `equity_value` non è ancora

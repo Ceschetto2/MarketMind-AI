@@ -129,8 +129,7 @@ class PortfolioPosition(Base):
     portfolio: Mapped["Portfolio"] = relationship(back_populates="positions")
     # Nessun back_populates: Asset (market_data.py) non ha bisogno di un
     # accesso inverso a "in quali portfolio è tenuto" — qui serve solo per
-    # risalire al symbol da un asset_id senza una query separata (Historical
-    # Context Builder, db/portfolio_reader.py).
+    # risalire al symbol da un asset_id dal codice ORM.
     asset: Mapped["Asset"] = relationship()
 
     __table_args__ = {"schema": SCHEMA}
@@ -192,9 +191,7 @@ class PortfolioPositionSnapshot(Base):
     )
 
     # Nessun back_populates, stesso motivo di PortfolioPosition.asset: serve
-    # solo a risalire al symbol da un asset_id senza query separata — il
-    # Backtesting Engine (db/backtest_reader.py) ne ha bisogno per etichettare
-    # le colonne del frame di prezzo passato a vectorbt.
+    # solo a risalire al symbol da un asset_id dal codice ORM.
     asset: Mapped["Asset"] = relationship()
 
     __table_args__ = (
@@ -214,13 +211,12 @@ class PortfolioPositionSnapshot(Base):
 
 class PortfolioWatchlistEntry(Base):
     """Un asset che questo portfolio osserva — lo scope su cui gira
-    `run_due_decisions()` per questo portfolio, non l'intero universo
-    condiviso. Popolata dal bootstrap (`decision_engine.engine.
-    initialize_portfolio`), non impegna capitale: distinta da
-    `PortfolioPosition` (quantità/prezzo di carico), che il Decision Engine
-    stesso aggiorna eseguendo i trade (`db/portfolio_writer.py`,
-    `execute_trade()`) — non il Backtesting Engine, che resta analisi
-    retrospettiva, non ancora scritto.
+    il Decision Engine per questo portfolio, non l'intero universo
+    condiviso. Popolata dal bootstrap (`DecisionEngine.initialize_portfolio`),
+    non impegna capitale: distinta da `PortfolioPosition` (quantità/prezzo di
+    carico), che il Decision Engine stesso aggiorna eseguendo i trade
+    (`PortfolioRepository.apply_trade`) — non il Backtesting Engine, che resta
+    analisi retrospettiva.
     """
 
     __tablename__ = "t_portfolio_watchlist"

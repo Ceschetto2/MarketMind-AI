@@ -7,6 +7,7 @@ dependencies = [
     "marketmind-common",
     "marketmind-db",
     "google-genai>=2.23.0",
+    "httpx",
     "pandas",
     "plotly<6",
     "pydantic>=2.13.5",

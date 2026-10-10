@@ -28,10 +28,18 @@ SCHEMA = "decisions"
 
 
 class ModelRun(Base):
-    """Una esecuzione del motore decisionale (batch settimanale su tutti gli asset)."""
+    """Un giro del motore decisionale per un portfolio, con il suo esito.
+
+    `status` è `running` alla creazione, poi `success`/`partial`/`failed`
+    alla chiusura (migrazione `0017`); NULL solo per i run precedenti alla
+    migrazione, il cui esito non è ricostruibile.
+    """
 
     __tablename__ = "t_model_runs"
-    __table_args__ = {"schema": SCHEMA}
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'success', 'partial', 'failed')", name="status"),
+        {"schema": SCHEMA},
+    )
 
     run_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     portfolio_id: Mapped[int] = mapped_column(
@@ -41,6 +49,9 @@ class ModelRun(Base):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False)
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str | None] = mapped_column(String(20))
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
 
     decisions_made: Mapped[list["ModelDecision"]] = relationship(back_populates="run")
     backtest_results: Mapped[list["BacktestResult"]] = relationship(back_populates="run")

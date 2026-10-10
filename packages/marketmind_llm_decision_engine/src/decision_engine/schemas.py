@@ -97,9 +97,9 @@ class DecisionContext(BaseModel):
     filtro no-look-ahead (`ts <= as_of` su ogni query) — di norma l'istante
     corrente, ma esplicito e parametrizzabile per permettere in futuro sia
     un rinvio (`llm.schemas.DeferralRequest`) sia una simulazione storica
-    (Backtesting Engine, non ancora scritto). `portfolio` è isolato per
-    disegno: costruito leggendo solo lo stato di *questo* portfolio, mai di
-    altri (`db/portfolio_reader.py`).
+    (Backtesting Engine). `portfolio` è isolato per disegno: costruito
+    leggendo solo lo stato di *questo* portfolio, mai di altri
+    (`PortfolioRepository`, un `portfolio_id` per chiamata).
     """
 
     asset_id: int

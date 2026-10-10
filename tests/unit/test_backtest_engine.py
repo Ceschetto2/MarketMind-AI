@@ -1,121 +1,124 @@
-"""Test unitari per `backtest/engine.py`. Nessun accesso a DB/rete: le
-letture (`get_position_events`/`get_recent_prices`/`get_portfolio`) sono
-mockate; vectorbt gira per davvero su dati sintetici (calcolo puro, nessun
-I/O esterno — stesso principio per cui i test di `llm/gemini.py` validano
-Pydantic per davvero, solo la chiamata di rete è mockata).
-"""
+"""Test unitari del Backtesting Engine (`backtest/engine.py`): la parte
+vectorbt (`compute_metrics`, pura) e `Backtester` con uno store in memoria.
+Nessun DB."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import pytest
 
 from marketmind_llm_decision_engine.backtest.engine import (
+    Backtester,
     NoTradesForRunError,
     _none_if_nan,
-    run_backtest,
+    compute_metrics,
 )
+from marketmind_llm_decision_engine.repositories.backtest import PositionEvent
 
 AS_OF = datetime(2026, 9, 20, tzinfo=timezone.utc)
 
 
-def _price(mocker, ts, close):
-    return mocker.Mock(ts=ts, close=close)
+def _event(asset_id, symbol, ts, quantity, avg_price, operation="INSERT"):
+    return PositionEvent(asset_id, symbol, ts, quantity, avg_price, operation)
 
 
-def _event(mocker, asset_id, symbol, ts, quantity, avg_price, operation="INSERT"):
-    asset = mocker.Mock(symbol=symbol)
-    return mocker.Mock(
-        asset_id=asset_id,
-        asset=asset,
-        changed_at=ts,
-        quantity=quantity,
-        avg_price=avg_price,
-        operation=operation,
-    )
+def _ts(day, hour=0):
+    return datetime(2026, 9, day, hour, tzinfo=timezone.utc)
 
 
-def _patch(mocker, events, prices_by_asset, starting_capital=10_000.0):
-    mocker.patch(
-        "marketmind_llm_decision_engine.backtest.engine.get_position_events", return_value=events
-    )
-    mocker.patch(
-        "marketmind_llm_decision_engine.backtest.engine.get_recent_prices",
-        side_effect=lambda session, asset_id, as_of, days_back: prices_by_asset[asset_id],
-    )
-    mocker.patch(
-        "marketmind_llm_decision_engine.backtest.engine.get_portfolio",
-        return_value=mocker.Mock(starting_capital=starting_capital),
-    )
-
-
-class TestRunBacktest:
-    def test_raises_when_no_trades_for_run(self, mocker):
-        _patch(mocker, events=[], prices_by_asset={})
-
-        with pytest.raises(NoTradesForRunError):
-            run_backtest(mocker.Mock(), portfolio_id=1, run_id=41, as_of=AS_OF)
-
-    def test_raises_on_unsupported_operation(self, mocker):
-        events = [
-            _event(mocker, 1, "AAPL", datetime(2026, 9, 14, tzinfo=timezone.utc), 10.0, 100.0, operation="UPDATE")
-        ]
-        _patch(mocker, events, prices_by_asset={1: []})
-
-        with pytest.raises(NotImplementedError):
-            run_backtest(mocker.Mock(), portfolio_id=1, run_id=41, as_of=AS_OF)
-
-    def test_computes_positive_pnl_from_price_appreciation(self, mocker):
-        entry_ts = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
-        events = [_event(mocker, 1, "AAPL", entry_ts, quantity=10.0, avg_price=100.0)]
-        prices = {
-            1: [
-                _price(mocker, datetime(2026, 9, 15, tzinfo=timezone.utc), 110.0),
-                _price(mocker, datetime(2026, 9, 16, tzinfo=timezone.utc), 120.0),
-            ]
-        }
-        _patch(mocker, events, prices, starting_capital=10_000.0)
-
-        metrics = run_backtest(mocker.Mock(), portfolio_id=1, run_id=41, as_of=AS_OF)
+class TestComputeMetrics:
+    def test_pnl_positivo_da_apprezzamento(self):
+        entry = _ts(14, 12)
+        metrics = compute_metrics(
+            [_event(1, "AAPL", entry, 10.0, 100.0)],
+            {"AAPL": [(_ts(15), 110.0), (_ts(16), 120.0)]},
+            starting_capital=10_000.0,
+        )
 
         # 10 azioni comprate a 100, ultimo prezzo noto 120 -> +20/azione
         assert metrics.pnl == pytest.approx(200.0)
-        assert metrics.period_start == entry_ts.date()
-        assert metrics.period_end == datetime(2026, 9, 16, tzinfo=timezone.utc).date()
+        assert metrics.period_start == entry.date()
+        assert metrics.period_end == _ts(16).date()
 
-    def test_cash_sharing_across_multiple_assets(self, mocker):
-        ts1 = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
-        ts2 = datetime(2026, 9, 14, 13, 0, tzinfo=timezone.utc)
-        events = [
-            _event(mocker, 1, "AAPL", ts1, quantity=10.0, avg_price=100.0),
-            _event(mocker, 2, "MSFT", ts2, quantity=5.0, avg_price=50.0),
-        ]
-        prices = {
-            1: [_price(mocker, datetime(2026, 9, 15, tzinfo=timezone.utc), 110.0)],
-            2: [_price(mocker, datetime(2026, 9, 15, tzinfo=timezone.utc), 40.0)],
-        }
-        _patch(mocker, events, prices, starting_capital=10_000.0)
-
-        metrics = run_backtest(mocker.Mock(), portfolio_id=1, run_id=41, as_of=AS_OF)
+    def test_cash_sharing_tra_piu_asset(self):
+        metrics = compute_metrics(
+            [_event(1, "AAPL", _ts(14, 12), 10.0, 100.0), _event(2, "MSFT", _ts(14, 13), 5.0, 50.0)],
+            {"AAPL": [(_ts(15), 110.0)], "MSFT": [(_ts(15), 40.0)]},
+            starting_capital=10_000.0,
+        )
 
         # AAPL: 10 * (110-100) = +100; MSFT: 5 * (40-50) = -50 -> netto +50
         assert metrics.pnl == pytest.approx(50.0)
 
-    def test_period_start_is_earliest_trade_not_earliest_price(self, mocker):
-        entry_ts = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
-        events = [_event(mocker, 1, "AAPL", entry_ts, quantity=1.0, avg_price=100.0)]
-        prices = {1: [_price(mocker, datetime(2026, 1, 1, tzinfo=timezone.utc), 90.0)]}
-        _patch(mocker, events, prices)
+    def test_inizio_periodo_e_il_primo_trade_non_il_primo_prezzo(self):
+        entry = _ts(14, 12)
+        metrics = compute_metrics(
+            [_event(1, "AAPL", entry, 1.0, 100.0)],
+            {"AAPL": [(datetime(2026, 1, 1, tzinfo=timezone.utc), 90.0)]},
+            starting_capital=10_000.0,
+        )
 
-        metrics = run_backtest(mocker.Mock(), portfolio_id=1, run_id=41, as_of=AS_OF)
+        assert metrics.period_start == entry.date()
 
-        assert metrics.period_start == entry_ts.date()
+    def test_nessun_trade(self):
+        with pytest.raises(NoTradesForRunError):
+            compute_metrics([], {}, starting_capital=1.0)
+
+    def test_operazioni_diverse_da_insert_non_supportate(self):
+        with pytest.raises(NotImplementedError, match="UPDATE"):
+            compute_metrics([_event(1, "AAPL", _ts(14), 10.0, 100.0, operation="UPDATE")], {"AAPL": []}, starting_capital=1.0)
+
+
+@dataclass
+class FakeBacktestStore:
+    events: list[PositionEvent]
+    prices: dict[int, list[tuple[datetime, float]]]
+    starting_capital: float = 10_000.0
+    written: list[tuple[int, object]] = field(default_factory=list)
+
+    def position_events(self, portfolio_id, run_id):
+        return self.events
+
+    def price_history(self, asset_id, *, as_of):
+        return self.prices[asset_id]
+
+    def starting_capital_of(self, portfolio_id):
+        return self.starting_capital
+
+    def write_result(self, run_id, metrics):
+        self.written.append((run_id, metrics))
+        return 7
+
+
+class TestBacktester:
+    def test_calcola_e_salva(self):
+        store = FakeBacktestStore([_event(1, "AAPL", _ts(14, 12), 10.0, 100.0)], {1: [(_ts(16), 120.0)]})
+
+        metrics, backtest_id = Backtester(store).run(portfolio_id=1, run_id=41, as_of=AS_OF)
+
+        assert metrics.pnl == pytest.approx(200.0)
+        assert backtest_id == 7 and store.written == [(41, metrics)]
+
+    def test_senza_salvataggio(self):
+        store = FakeBacktestStore([_event(1, "AAPL", _ts(14, 12), 10.0, 100.0)], {1: [(_ts(16), 120.0)]})
+
+        _, backtest_id = Backtester(store).run(portfolio_id=1, run_id=41, as_of=AS_OF, save=False)
+
+        assert backtest_id is None and store.written == []
+
+    def test_run_senza_trade_non_scrive(self):
+        store = FakeBacktestStore([], {})
+
+        with pytest.raises(NoTradesForRunError):
+            Backtester(store).run(portfolio_id=1, run_id=41, as_of=AS_OF)
+        assert store.written == []
 
 
 class TestNoneIfNan:
-    def test_returns_none_for_nan(self):
+    def test_nan_diventa_none(self):
         assert _none_if_nan(float("nan")) is None
 
-    def test_returns_float_for_normal_value(self):
+    def test_valore_normale(self):
         assert _none_if_nan(1.5) == 1.5

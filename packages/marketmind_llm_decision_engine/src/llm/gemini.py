@@ -24,10 +24,11 @@ import logging
 import re
 from typing import Any, TypeVar
 
+import httpx
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import RetryCallState, retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from marketmind_common.config import get_api_key
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
@@ -84,10 +85,75 @@ _WATCHLIST_SYSTEM_PROMPT = (
 )
 
 
+# Un 429 con un'attesa indicata da Google fino a questa soglia è un limite al
+# minuto (richieste o token di input): si aspetta e si riprova. Oltre è la
+# quota giornaliera (l'attesa indicata arriva all'azzeramento, ore): inutile
+# aspettare dentro un giro.
+MAX_RATE_LIMIT_WAIT_S = 300.0
+# Margine sull'attesa indicata, per non riprovare un istante troppo presto.
+_RATE_LIMIT_MARGIN_S = 1.0
+
+_DURATION_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)s\s*$")
+_RETRY_IN_RE = re.compile(r"retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
+
+
+def _rate_limit_delay(exc: BaseException) -> float | None:
+    """Secondi di attesa indicati da un 429: `RetryInfo.retryDelay` nei
+    `details` dell'errore (es. `"46s"`), altrimenti il "Please retry in
+    46.9s" del messaggio. `None` se non è un 429 o se nessun tempo è
+    indicato."""
+    if not isinstance(exc, errors.ClientError) or exc.code != 429:
+        return None
+    body = exc.details if isinstance(exc.details, dict) else {}
+    error = body.get("error", body)
+    for detail in error.get("details", []) or []:
+        if isinstance(detail, dict) and detail.get("@type", "").endswith("google.rpc.RetryInfo"):
+            match = _DURATION_RE.match(str(detail.get("retryDelay", "")))
+            if match:
+                return float(match.group(1))
+    match = _RETRY_IN_RE.search(str(error.get("message") or exc.message or ""))
+    return float(match.group(1)) if match else None
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Riprovabili: 5xx (`ServerError`, anche 504 di deadline), errori di
+    rete/timeout del trasporto, e un 429 con un'attesa indicata entro
+    `MAX_RATE_LIMIT_WAIT_S`. Non riprovabili: gli altri 4xx (`ClientError`)
+    — la quota giornaliera esaurita, un modello inesistente, una richiesta
+    malformata non cambiano riprovando — e qualunque altra eccezione, che è
+    un errore del codice."""
+    if isinstance(exc, (errors.ServerError, httpx.TransportError)):
+        return True
+    delay = _rate_limit_delay(exc)
+    return delay is not None and delay <= MAX_RATE_LIMIT_WAIT_S
+
+
+_backoff = wait_exponential(multiplier=2, min=2, max=20)
+
+
+def _wait(retry_state: RetryCallState) -> float:
+    """Su un 429 l'attesa indicata da Google (più un margine), altrimenti
+    backoff esponenziale."""
+    delay = _rate_limit_delay(retry_state.outcome.exception())
+    if delay is not None:
+        return delay + _RATE_LIMIT_MARGIN_S
+    return _backoff(retry_state)
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception()
+    logger.warning(
+        "chiamata a Gemini fallita (tentativo %d: %s), nuovo tentativo tra %.1fs",
+        retry_state.attempt_number, getattr(exc, "status", None) or type(exc).__name__,
+        retry_state.upcoming_sleep,
+    )
+
+
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception(_is_retryable),
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=2, min=2, max=20),
+    wait=_wait,
+    before_sleep=_log_retry,
     reraise=True,
 )
 def _call_gemini(

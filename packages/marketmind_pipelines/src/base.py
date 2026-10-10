@@ -30,17 +30,14 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
-from marketmind_db.audit import IngestionRunAudit
+from marketmind_db.audit import IngestionRunAudit, RunStatus, run_outcome
 from marketmind_db.database import Database
 from marketmind_pipelines.lookups import universe_symbols
 from marketmind_pipelines.sinks import RecordSink
 
 logger = logging.getLogger(__name__)
-
-RunStatus = Literal["success", "partial", "failed"]
-
 
 class PipelineInterrupted(BaseException):
     """Run interrotto dall'esterno (SIGTERM da systemd/Podman)."""
@@ -113,11 +110,7 @@ class BasePipeline[TargetT, RawT, RecordT](ABC):
 
     @classmethod
     def outcome(cls, total: int, failed: int) -> RunStatus:
-        if failed == 0:
-            return "success"
-        if failed / total > cls.failure_threshold:
-            return "failed"
-        return "partial"
+        return run_outcome(total, failed, cls.failure_threshold)
 
     def run(self) -> RunResult:
         failures: list[TargetFailure] = []

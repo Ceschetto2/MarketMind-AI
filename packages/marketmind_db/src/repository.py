@@ -193,6 +193,33 @@ class TableRepository(Generic[ModelT]):
         stmt = self._apply_order_and_limit(stmt, order_by, limit)
         return list(self.session.execute(stmt).scalars())
 
+    def latest_per(
+        self,
+        group_by: Sequence[str],
+        *,
+        order_by: str,
+        where: Where | None = None,
+        limit: int | None = DEFAULT_READ_LIMIT,
+    ) -> list[ModelT]:
+        """Per ogni combinazione distinta di `group_by`, la riga col valore più
+        alto di `order_by` tra quelle che soddisfano `where` — es. l'ultimo
+        valore noto per indicatore macro fino a una data. `DISTINCT ON` di
+        Postgres, una sola query."""
+        group_by = (group_by,) if isinstance(group_by, str) else tuple(group_by)
+        if not group_by:
+            raise InvalidQueryError(f"latest_per su {self.table.fullname}: group_by vuoto")
+        group_cols = self._columns_by_name(group_by, "group_by")
+        [order_col] = self._columns_by_name((order_by,), "order_by")
+        stmt = (
+            select(self.model)
+            .where(*self._where_clauses(where))
+            .distinct(*group_cols)
+            .order_by(*group_cols, order_col.desc())
+            .execution_options(populate_existing=True)
+        )
+        stmt = self._apply_order_and_limit(stmt, (), limit)
+        return list(self.session.execute(stmt).scalars())
+
     def get_one(self, **key: Any) -> ModelT | None:
         """La riga identificata da una chiave candidata completa (primary key
         o vincolo di unicità), `None` se non esiste."""
