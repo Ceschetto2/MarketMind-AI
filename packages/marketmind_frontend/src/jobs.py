@@ -1,129 +1,152 @@
-"""Avvio dei job dalla dashboard: pipeline di ingestion, giro del Decision
-Engine, bootstrap di un portfolio.
+"""Coda dei job chiesti dalla dashboard: pipeline di ingestion, giro del
+Decision Engine, bootstrap e backtest di un portfolio.
 
-La dashboard non esegue nulla in proprio: avvia le unit systemd già
-installate da `deploy/quadlet/deploy.sh`, cioè gli stessi container, ruoli
-Postgres e secret dei timer (`systemctl --user start`, come `deploy.sh
---trigger`). Così non le servono né le chiavi API né le dipendenze del
-Decision Engine, e un'azione lanciata a mano lascia la stessa traccia di un
-giro schedulato (`t_ingestion_runs`, `t_model_runs`), che la dashboard
-mostra.
+La dashboard non esegue nulla in proprio e non comanda systemd (nel suo
+container non c'è): scrive una richiesta in `ops.t_job_requests`, e un
+dispatcher sull'host la prende in carico e avvia la unit corrispondente, con
+gli stessi container, ruoli Postgres e secret dei timer
+(`marketmind_frontend.dispatch`, `deploy/systemd/marketmind_frontend/`).
+L'esito del job si legge dove lo scrive il job stesso (`t_ingestion_runs`,
+`t_model_runs`, `t_backtest_results`).
 
-`--no-block`: le unit sono `oneshot`, e un `start` normale aspetterebbe la
-fine del container, tenendo ferma la pagina per minuti. L'esito si legge
-dopo, dal DB o da `status()`.
-
-Il backtest di un portfolio parte allo stesso modo
-(`marketmind-backtest@<id>`).
-
-Funziona dove gira systemd con quelle unit, cioè sul laptop col deploy
-Quadlet. Sul server Docker (`deploy/docker/`, job in crontab) non c'è
-ancora un equivalente: punto aperto.
+Una richiesta uguale già pendente non si duplica. Al momento della presa in
+carico, le richieste pendenti da più di `REQUEST_TTL` scadono (`failed`):
+un dispatcher rimasto fermo non deve, alla ripartenza, avviare una raffica
+di job chiesti ore prima.
 """
 
 from __future__ import annotations
 
-import logging
-import subprocess
-from collections.abc import Callable
+import re
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
+from marketmind_db.database import Transaction
+from marketmind_db.models.ops import JobRequest as JobRequestRow
 
-PIPELINE_PREFIX = "marketmind-ingest-"
-PIPELINE_SUFFIX = ".service"
-DECIDE_UNIT = "marketmind-decide.service"
-INIT_PORTFOLIO_UNIT = "marketmind-init-portfolio@{portfolio_id}.service"
-BACKTEST_UNIT = "marketmind-backtest@{portfolio_id}.service"
+# Le pipeline con una unit `marketmind-ingest-<nome>`. Il container della
+# dashboard non può interrogare systemd: un test le confronta con le unit di
+# `deploy/quadlet/marketmind_pipelines/`.
+PIPELINES = (
+    "finnhub-earnings",
+    "finnhub-news",
+    "fmp",
+    "fred",
+    "gdelt-ngrams",
+    "universe-csv",
+    "yfinance-assets",
+    "yfinance-prices",
+)
+JOB_KINDS = ("pipeline", "decide", "init-portfolio", "backtest")
+REQUEST_TTL = timedelta(hours=1)
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+_PORTFOLIO_ID = re.compile(r"^[1-9][0-9]{0,18}$")
 
 
-class JobLaunchError(RuntimeError):
-    """Un job non è partito: unit inesistente, systemctl assente o fallito."""
+class InvalidJobError(ValueError):
+    """Tipo di job sconosciuto o target non valido per quel tipo."""
+
+
+def normalize_job(kind: str, target: object = None) -> tuple[str, str | None]:
+    """Valida tipo e target e li porta nella forma salvata (target testo).
+    Nessun valore arbitrario arriva al dispatcher, che ne ricava un nome di
+    unit systemd."""
+    if kind == "decide":
+        if target is not None:
+            raise InvalidJobError("il giro del Decision Engine non ha un target")
+        return kind, None
+    if kind == "pipeline":
+        if target not in PIPELINES:
+            raise InvalidJobError(f"pipeline sconosciuta: {target!r}")
+        return kind, str(target)
+    if kind in ("init-portfolio", "backtest"):
+        text = str(target) if target is not None else ""
+        if isinstance(target, bool) or not _PORTFOLIO_ID.match(text):
+            raise InvalidJobError(f"portfolio_id non valido: {target!r}")
+        return kind, text
+    raise InvalidJobError(f"tipo di job sconosciuto: {kind!r}")
 
 
 @dataclass(frozen=True)
-class JobStatus:
-    unit: str
-    active_state: str
-    result: str
-    finished: str
+class JobRequest:
+    job_request_id: int
+    kind: str
+    target: str | None
+    requested_at: datetime | None
+    status: str
+    started_at: datetime | None
+    error_message: str | None
+
+    @classmethod
+    def of(cls, row: JobRequestRow) -> JobRequest:
+        return cls(row.job_request_id, row.kind, row.target, row.requested_at, row.status, row.started_at,
+                   row.error_message)
+
+    @property
+    def label(self) -> str:
+        return {
+            "pipeline": f"pipeline {self.target}",
+            "decide": "giro del Decision Engine",
+            "init-portfolio": f"bootstrap del portfolio {self.target}",
+            "backtest": f"backtest del portfolio {self.target}",
+        }.get(self.kind, self.kind)
 
 
-def _valid_id(portfolio_id: int) -> int:
-    if not isinstance(portfolio_id, int) or portfolio_id <= 0:
-        raise JobLaunchError(f"portfolio_id non valido: {portfolio_id!r}")
-    return portfolio_id
+class JobQueue:
+    def __init__(self, tx: Transaction) -> None:
+        self._requests = tx.repository(JobRequestRow)
 
-
-class SystemdJobLauncher:
-    def __init__(self, run: Runner = subprocess.run, *, timeout_s: float = 30) -> None:
-        self._run = run
-        self._timeout_s = timeout_s
-
-    def pipelines(self) -> list[str]:
-        """Le pipeline con una unit installata (`marketmind-ingest-<nome>`)."""
-        output = self._systemctl(
-            "list-unit-files", f"{PIPELINE_PREFIX}*{PIPELINE_SUFFIX}", "--no-legend", "--plain"
+    def request(self, kind: str, target: object = None, *, now: datetime) -> tuple[JobRequest, bool]:
+        """Accoda un job. Restituisce la richiesta e se è nuova: una richiesta
+        uguale ancora pendente viene restituita invece di duplicarla."""
+        kind, target = normalize_job(kind, target)
+        pending = self._requests.select(
+            where={"kind": kind, "target": target, "status": "pending"}, order_by=("job_request_id",), limit=1
         )
-        names = []
-        for line in output.splitlines():
-            unit = line.split(maxsplit=1)[0] if line.strip() else ""
-            if unit.startswith(PIPELINE_PREFIX) and unit.endswith(PIPELINE_SUFFIX):
-                names.append(unit[len(PIPELINE_PREFIX) : -len(PIPELINE_SUFFIX)])
-        return sorted(names)
-
-    def trigger_pipeline(self, name: str) -> str:
-        """Avvia una pipeline; il nome deve essere tra quelle installate, così
-        nessun valore arbitrario arriva a `systemctl` come nome di unit."""
-        if name not in self.pipelines():
-            raise JobLaunchError(f"pipeline sconosciuta: {name!r}")
-        return self._start(f"{PIPELINE_PREFIX}{name}{PIPELINE_SUFFIX}")
-
-    def trigger_decision_run(self) -> str:
-        """Un giro di `run-due`: apre i cicli dovuti e riprende quelli con
-        asset ancora senza decisione, per tutti i portfolio attivi."""
-        return self._start(DECIDE_UNIT)
-
-    def init_portfolio(self, portfolio_id: int) -> str:
-        """Bootstrap di un portfolio (`init-portfolio <id>`) tramite la unit
-        template `marketmind-init-portfolio@.container`."""
-        return self._start(INIT_PORTFOLIO_UNIT.format(portfolio_id=_valid_id(portfolio_id)))
-
-    def backtest(self, portfolio_id: int) -> str:
-        """Backtest dell'intero storico del portfolio (`backtest <id>`) tramite
-        la unit template `marketmind-backtest@.container`; il risultato si
-        aggiunge a `t_backtest_results`."""
-        return self._start(BACKTEST_UNIT.format(portfolio_id=_valid_id(portfolio_id)))
-
-    def status(self, unit: str) -> JobStatus:
-        output = self._systemctl(
-            "show", "-p", "ActiveState", "-p", "Result", "-p", "ExecMainExitTimestamp", unit
+        if pending:
+            return JobRequest.of(pending[0]), False
+        [row] = self._requests.insert_returning(
+            [{"kind": kind, "target": target, "status": "pending", "requested_at": now}],
+            returning=("job_request_id",),
         )
-        props = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-        return JobStatus(
-            unit=unit,
-            active_state=props.get("ActiveState", "unknown"),
-            result=props.get("Result", ""),
-            finished=props.get("ExecMainExitTimestamp", ""),
+        return JobRequest(row["job_request_id"], kind, target, now, "pending", None, None), True
+
+    def claim(self, *, now: datetime) -> JobRequest | None:
+        """Prende in carico la richiesta pendente più vecchia (`started`), dopo
+        aver fatto scadere quelle più vecchie di `REQUEST_TTL`. Un solo
+        dispatcher alla volta (la sua unit è `oneshot`): l'UPDATE condizionato
+        allo stato basta a non prendere due volte la stessa richiesta."""
+        self._requests.update(
+            {"status": "failed",
+             "error_message": f"scaduta: non presa in carico entro {REQUEST_TTL.total_seconds() / 60:.0f} minuti"},
+            where=[JobRequestRow.status == "pending", JobRequestRow.requested_at < now - REQUEST_TTL],
+        )
+        candidates = self._requests.select(
+            where={"status": "pending"}, order_by=("requested_at", "job_request_id"), limit=1
+        )
+        if not candidates:
+            return None
+        row = candidates[0]
+        taken = self._requests.update(
+            {"status": "started", "started_at": now},
+            where={"job_request_id": row.job_request_id, "status": "pending"},
+        )
+        if taken != 1:
+            return None
+        return JobRequest(row.job_request_id, row.kind, row.target, row.requested_at, "started", now, None)
+
+    def fail(self, request_id: int, message: str, *, now: datetime) -> None:
+        """L'avvio della unit è fallito: la richiesta resta `failed` col motivo."""
+        self._requests.update(
+            {"status": "failed", "error_message": message[:2_000], "started_at": now},
+            where={"job_request_id": request_id},
         )
 
-    def _start(self, unit: str) -> str:
-        self._systemctl("start", "--no-block", unit)
-        logger.info("avviata %s dalla dashboard", unit)
-        return unit
+    def recent(self, limit: int = 50) -> list[JobRequest]:
+        rows = self._requests.select(order_by=("-job_request_id",), limit=limit)
+        return [JobRequest.of(r) for r in rows]
 
-    def _systemctl(self, *args: str) -> str:
-        command = ["systemctl", "--user", *args]
-        try:
-            result: Any = self._run(
-                command, check=True, capture_output=True, text=True, timeout=self._timeout_s
-            )
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or "").strip()
-            raise JobLaunchError(f"{' '.join(command)} fallito: {detail or exc}") from exc
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            raise JobLaunchError(f"{' '.join(command)} non eseguibile: {exc}") from exc
-        return result.stdout or ""
+    def latest_for(self, kind: str, target: object = None) -> JobRequest | None:
+        kind, target = normalize_job(kind, target)
+        rows = self._requests.select(where={"kind": kind, "target": target}, order_by=("-job_request_id",), limit=1)
+        return JobRequest.of(rows[0]) if rows else None

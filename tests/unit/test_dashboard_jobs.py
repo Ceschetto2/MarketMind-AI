@@ -1,114 +1,57 @@
-"""Test unitari del lancio dei job dalla dashboard (`marketmind_frontend.jobs`):
-`systemctl --user` è sostituito da un runner finto, nessun processo reale."""
+"""Test unitari della parte pura della coda dei job (`marketmind_frontend.jobs`):
+validazione delle richieste ed elenco delle pipeline. La coda vera e propria
+è testata contro Postgres in `tests/integration/test_job_queue_db.py`."""
 
 from __future__ import annotations
 
-import subprocess
+from pathlib import Path
 
 import pytest
 
-from marketmind_frontend.jobs import JobLaunchError, SystemdJobLauncher
+from marketmind_db.access import APP, FULL_ACCESS, INGESTION, READ_ONLY
+from marketmind_frontend.jobs import PIPELINES, InvalidJobError, JobRequest, normalize_job
 
-LIST_OUTPUT = (
-    "marketmind-ingest-finnhub-news.service     generated -\n"
-    "marketmind-ingest-fred.service             generated -\n"
-    "marketmind-ingest-yfinance-prices.service  generated -\n"
-)
+REPO = Path(__file__).resolve().parents[2]
 
 
-class FakeRunner:
-    def __init__(self, stdout: str = "", returncode: int = 0, exc: Exception | None = None):
-        self.calls: list[list[str]] = []
-        self.stdout = stdout
-        self.returncode = returncode
-        self.exc = exc
-
-    def __call__(self, args, **kwargs):
-        self.calls.append(list(args))
-        if self.exc is not None:
-            raise self.exc
-        if kwargs.get("check") and self.returncode != 0:
-            raise subprocess.CalledProcessError(self.returncode, args, output=self.stdout, stderr="boom")
-        return subprocess.CompletedProcess(args, self.returncode, stdout=self.stdout, stderr="")
-
-
-def test_pipelines_are_read_from_installed_units():
-    runner = FakeRunner(stdout=LIST_OUTPUT)
-
-    assert SystemdJobLauncher(runner).pipelines() == ["finnhub-news", "fred", "yfinance-prices"]
-    assert runner.calls[0][:4] == ["systemctl", "--user", "list-unit-files", "marketmind-ingest-*.service"]
-
-
-def test_trigger_pipeline_starts_its_unit_without_waiting():
-    runner = FakeRunner(stdout=LIST_OUTPUT)
-
-    unit = SystemdJobLauncher(runner).trigger_pipeline("fred")
-
-    assert unit == "marketmind-ingest-fred.service"
-    assert runner.calls[-1] == ["systemctl", "--user", "start", "--no-block", "marketmind-ingest-fred.service"]
-
-
-def test_trigger_unknown_pipeline_is_rejected_before_systemctl_start():
-    runner = FakeRunner(stdout=LIST_OUTPUT)
-
-    with pytest.raises(JobLaunchError, match="sconosciuta"):
-        SystemdJobLauncher(runner).trigger_pipeline("fred; rm -rf ~")
-
-    assert all("start" not in call for call in runner.calls)
-
-
-def test_trigger_decision_run_starts_the_shared_decide_unit():
-    runner = FakeRunner()
-
-    assert SystemdJobLauncher(runner).trigger_decision_run() == "marketmind-decide.service"
-    assert runner.calls == [["systemctl", "--user", "start", "--no-block", "marketmind-decide.service"]]
-
-
-def test_init_portfolio_starts_the_template_instance():
-    runner = FakeRunner()
-
-    unit = SystemdJobLauncher(runner).init_portfolio(7)
-
-    assert unit == "marketmind-init-portfolio@7.service"
-    assert runner.calls == [["systemctl", "--user", "start", "--no-block", "marketmind-init-portfolio@7.service"]]
-
-
-@pytest.mark.parametrize("bad_id", [0, -3])
-def test_init_portfolio_rejects_non_positive_ids(bad_id):
-    with pytest.raises(JobLaunchError):
-        SystemdJobLauncher(FakeRunner()).init_portfolio(bad_id)
-
-
-def test_backtest_starts_the_template_instance():
-    runner = FakeRunner()
-
-    unit = SystemdJobLauncher(runner).backtest(5)
-
-    assert unit == "marketmind-backtest@5.service"
-    assert runner.calls == [["systemctl", "--user", "start", "--no-block", "marketmind-backtest@5.service"]]
-
-
-def test_systemctl_failure_becomes_job_launch_error():
-    launcher = SystemdJobLauncher(FakeRunner(returncode=5))
-
-    with pytest.raises(JobLaunchError, match="marketmind-decide.service"):
-        launcher.trigger_decision_run()
-
-
-def test_missing_systemctl_becomes_job_launch_error():
-    launcher = SystemdJobLauncher(FakeRunner(exc=FileNotFoundError("systemctl")))
-
-    with pytest.raises(JobLaunchError):
-        launcher.trigger_decision_run()
-
-
-def test_status_parses_systemctl_show():
-    runner = FakeRunner(
-        stdout="ActiveState=failed\nResult=exit-code\nExecMainExitTimestamp=Sun 2026-10-11 20:00:08 CEST\n"
+def test_pipelines_coincidono_con_le_unit_installate_dal_deploy():
+    """Il container della dashboard non vede systemd: l'elenco è una costante,
+    che deve restare allineata alle unit Quadlet delle pipeline."""
+    units = sorted(
+        p.name.removeprefix("marketmind-ingest-").removesuffix(".container")
+        for p in (REPO / "deploy/quadlet/marketmind_pipelines").glob("marketmind-ingest-*.container")
     )
+    assert sorted(PIPELINES) == units
 
-    status = SystemdJobLauncher(runner).status("marketmind-decide.service")
 
-    assert status.active_state == "failed"
-    assert status.result == "exit-code"
-    assert status.finished == "Sun 2026-10-11 20:00:08 CEST"
+@pytest.mark.parametrize(
+    "kind, target, expected",
+    [("pipeline", "fred", "fred"), ("decide", None, None), ("backtest", 4, "4"), ("init-portfolio", "12", "12")],
+)
+def test_normalize_job(kind, target, expected):
+    assert normalize_job(kind, target) == (kind, expected)
+
+
+@pytest.mark.parametrize(
+    "kind, target",
+    [("pipeline", "fred; rm -rf ~"), ("pipeline", None), ("decide", "x"), ("backtest", -1),
+     ("backtest", "4 5"), ("init-portfolio", None), ("sconosciuto", None)],
+)
+def test_normalize_job_rifiuta(kind, target):
+    with pytest.raises(InvalidJobError):
+        normalize_job(kind, target)
+
+
+def test_etichette():
+    def req(kind, target):
+        return JobRequest(1, kind, target, None, "pending", None, None)
+
+    assert req("pipeline", "fred").label == "pipeline fred"
+    assert req("decide", None).label == "giro del Decision Engine"
+    assert req("init-portfolio", "5").label == "bootstrap del portfolio 5"
+    assert req("backtest", "5").label == "backtest del portfolio 5"
+
+
+def test_solo_app_scrive_le_richieste():
+    assert "ops" in APP.writable_schemas and "ops" in FULL_ACCESS.writable_schemas
+    assert "ops" not in INGESTION.writable_schemas and not READ_ONLY.writable_schemas

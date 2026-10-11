@@ -50,8 +50,8 @@
 #                                    market_data). Stessa logica di sopra.
 #   MARKETMIND_READONLY_PASSWORD    password del ruolo Postgres
 #                                    marketmind_readonly (sola lettura, usato
-#                                    dalla dashboard in locale). Nessun
-#                                    secret Podman: nessun container lo usa.
+#                                    dalla dashboard, secret
+#                                    marketmind-readonly-password).
 #   FINNHUB_API_KEY                 chiave API Finnhub, obbligatoria (nessun
 #   FRED_API_KEY                    fallback interattivo: sono chiavi di
 #   FMP_API_KEY                     terze parti, non password scelte da chi
@@ -138,6 +138,7 @@ SECRETS=(
     marketmind-db-password
     marketmind-ingestion-password
     marketmind-app-password
+    marketmind-readonly-password
     marketmind-finnhub-api-key
     marketmind-fred-api-key
     marketmind-fmp-api-key
@@ -236,6 +237,19 @@ shopt -u nullglob
 log "linking unit .timer: $SYSTEMD_SRC -> $SYSTEMD_USER_DST"
 link_units "$SYSTEMD_USER_DST" "${TIMER_FILES[@]}"
 
+# --- Unit .service da un modello (*.service.in): scritte, non linkate ---
+# Servono quando ExecStart deve puntare a uno script del repo (il dispatcher
+# dei job della dashboard): il percorso assoluto del checkout si sostituisce
+# a @REPO_ROOT@. Sono file veri, non symlink: link_units non li tocca.
+shopt -s nullglob
+for template in "$SYSTEMD_SRC"/*/*.service.in; do
+    unit="$(basename "$template" .in)"
+    rendered="$(<"$template")"
+    printf '%s\n' "${rendered//@REPO_ROOT@/$REPO_ROOT}" > "$SYSTEMD_USER_DST/$unit"
+    log "  $unit generata da $(basename "$template")"
+done
+shopt -u nullglob
+
 # --- Secret: sempre ricreati dal valore corrente dell'ambiente ---
 # store_secret <secret_name> <env_var_name> <allow_interactive:0|1>
 #
@@ -278,6 +292,7 @@ log "provisioning secret"
 store_secret marketmind-db-password MARKETMIND_DB_PASSWORD 1
 store_secret marketmind-ingestion-password MARKETMIND_INGESTION_PASSWORD 1
 store_secret marketmind-app-password MARKETMIND_APP_PASSWORD 1
+store_secret marketmind-readonly-password MARKETMIND_READONLY_PASSWORD 1
 # Le quattro chiavi API sono di terze parti, non password scelte da chi
 # lancia il deploy: nessun fallback interattivo, vanno già valorizzate in
 # .env. GEMINI_API_KEY è il provider LLM (marketmind-decide.container), le
@@ -363,6 +378,13 @@ log "migrazioni: restart $MIGRATE_SERVICE"
 systemctl --user restart "$MIGRATE_SERVICE" \
     || fail "migrazioni fallite — controlla con: journalctl --user -u $MIGRATE_SERVICE"
 log "schema aggiornato"
+
+# --- Dashboard: servizio sempre attivo, riavviato per prendere l'immagine
+# nuova e lo schema appena migrato (Quadlet la abilita da sé al
+# daemon-reload, come le altre unit generate). ---
+log "restart marketmind-frontend.service (dashboard su http://localhost:8501)"
+systemctl --user restart marketmind-frontend.service \
+    || fail "dashboard non avviata — controlla con: journalctl --user -u marketmind-frontend.service"
 
 for unit in "${TIMER_UNITS[@]}"; do
     log "enable --now $unit"

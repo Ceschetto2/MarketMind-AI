@@ -97,3 +97,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA market_data GRANT SELECT ON TABLES TO marketm
 ALTER DEFAULT PRIVILEGES IN SCHEMA decisions GRANT SELECT ON TABLES TO marketmind_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA portfolio GRANT SELECT ON TABLES TO marketmind_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT SELECT ON TABLES TO marketmind_readonly;
+
+-- --- schema ops (coda dei job della dashboard, migrazione 0021) ---
+-- marketmind_app (dashboard e dispatcher) legge e scrive le richieste,
+-- marketmind_readonly le legge. Condizionato all'esistenza dello schema:
+-- questo script gira prima delle migrazioni, e al primo deploy dopo la 0021
+-- lo schema non c'è ancora — i grant iniziali li applica la migrazione.
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_namespace WHERE nspname = 'ops') THEN
+        GRANT USAGE ON SCHEMA ops TO marketmind_app, marketmind_readonly;
+        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ops TO marketmind_app;
+        GRANT SELECT ON ALL TABLES IN SCHEMA ops TO marketmind_readonly;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA ops GRANT SELECT, INSERT, UPDATE ON TABLES TO marketmind_app;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA ops GRANT SELECT ON TABLES TO marketmind_readonly;
+    END IF;
+END
+$$;

@@ -15,14 +15,17 @@ from marketmind_frontend.app import (
     _backtests_dataframe,
     _comparison_chart,
     _decisions_dataframe,
+    _dispatcher_stalled,
     _equity_chart,
     _ingestion_dataframe,
+    _job_requests_dataframe,
     _pct,
     _runs_dataframe,
     _status_label,
     _truncate,
     _valuation_dataframe,
 )
+from marketmind_frontend.jobs import JobRequest
 from marketmind_frontend.views import BacktestView, DecisionView, IngestionRunView, PortfolioView, RunView
 
 T0 = datetime(2026, 10, 1, 10, tzinfo=timezone.utc)
@@ -112,9 +115,31 @@ class TestTables:
         assert list(df["Età"]) == ["3 h"]
         assert list(df["Durata"]) == ["2 min"]
 
+    def test_job_requests_table(self):
+        requests = [JobRequest(3, "backtest", "4", T0, "failed", T0, "Unit not found"),
+                    JobRequest(2, "decide", None, T0, "started", T0 + timedelta(seconds=30), None)]
+
+        df = _job_requests_dataframe(requests)
+
+        assert list(df["Job"]) == ["backtest del portfolio 4", "giro del Decision Engine"]
+        assert list(df["Stato"]) == ["❌ failed", "▶️ started"]
+
     def test_empty_tables(self):
         assert _decisions_dataframe([]).empty
         assert _runs_dataframe([]).empty
+
+
+class TestDispatcherStalled:
+    def test_richiesta_pendente_da_troppo(self):
+        old = JobRequest(1, "decide", None, T0, "pending", None, None)
+
+        assert _dispatcher_stalled([old], now=T0 + timedelta(minutes=5))
+        assert not _dispatcher_stalled([old], now=T0 + timedelta(minutes=1))
+
+    def test_solo_le_pendenti_contano(self):
+        done = JobRequest(1, "decide", None, T0, "started", T0, None)
+
+        assert not _dispatcher_stalled([done], now=T0 + timedelta(hours=1))
 
 
 class TestCharts:

@@ -1,0 +1,14 @@
+# Modello della unit del dispatcher dei job della dashboard. Non è linkata
+# come le altre: deploy.sh la scrive in ~/.config/systemd/user/ sostituendo il
+# segnaposto REPO_ROOT (tra chiocciole) col percorso del checkout, perché ExecStart vuole il percorso
+# assoluto dello script (marketmind-dispatch.sh, accanto a questo file).
+# Avviata da marketmind-dispatch.timer, ogni minuto.
+
+[Unit]
+Description=MarketMind AI — dispatcher dei job chiesti dalla dashboard
+Requires=marketmind-db.service
+After=marketmind-db.service marketmind-migrate.service
+
+[Service]
+Type=oneshot
+ExecStart=@REPO_ROOT@/deploy/systemd/marketmind_frontend/marketmind-dispatch.sh
