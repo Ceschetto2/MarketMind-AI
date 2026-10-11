@@ -259,20 +259,23 @@ class TestDecisionsRunsBacktests:
         assert [(r.run_id, r.status, r.decisions) for r in runs] == [(failed, "failed", 2), (old, None, 0)]
         assert runs[0].error_message == "429 quota"
 
-    def test_backtests_of_the_portfolio(self, full, ro):
+    def test_backtests_of_the_portfolio_most_recent_first(self, full, ro):
         pid, other = _portfolio(full, "test-dash-bt"), _portfolio(full, "test-dash-bt-other")
-        run, other_run = _run(full, pid), _run(full, other)
+        legacy_run = _run(full, pid)
         with full.transaction() as tx:
             tx.repository(BacktestResult).insert(
-                [{"run_id": r, "pnl": pnl, "sharpe_ratio": None, "max_drawdown": -0.1, "win_rate": 0.5,
+                [{"portfolio_id": p, "run_id": r, "pnl": pnl, "total_return": ret, "benchmark_return": bench,
+                  "sharpe_ratio": None, "max_drawdown": -0.1, "win_rate": 0.5,
                   "period_start": date(2026, 10, 1), "period_end": date(2026, 10, 2)}
-                 for r, pnl in [(run, 12.5), (other_run, 99.0)]]
+                 for p, r, pnl, ret, bench in [(pid, legacy_run, 12.5, None, None), (pid, None, 30.0, 0.03, 0.01),
+                                               (other, None, 99.0, 0.1, 0.0)]]
             )
 
         with ro.transaction() as tx:
-            [result] = DashboardRepository(tx).backtests(pid)
+            results = DashboardRepository(tx).backtests(pid)
 
-        assert (result.run_id, result.pnl, result.sharpe_ratio) == (run, 12.5, None)
+        assert [(r.run_id, r.pnl, r.total_return, r.benchmark_return) for r in results] == [
+            (None, 30.0, 0.03, 0.01), (legacy_run, 12.5, None, None)]
 
 
 class TestIngestionHealth:

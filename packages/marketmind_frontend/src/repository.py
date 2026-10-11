@@ -167,15 +167,13 @@ class DashboardRepository:
         ]
 
     def backtests(self, portfolio_id: int) -> list[BacktestView]:
-        run_ids = self._run_ids(portfolio_id)
-        if not run_ids:
-            return []
+        """I backtest del portfolio, il più recente prima."""
         rows = self.tx.repository(BacktestResult).select(
-            where={"run_id": run_ids}, order_by=("-backtest_id",), limit=None
+            where={"portfolio_id": portfolio_id}, order_by=("-backtest_id",), limit=None
         )
         return [
             BacktestView(r.backtest_id, r.run_id, r.pnl, r.sharpe_ratio, r.max_drawdown, r.win_rate,
-                         r.period_start, r.period_end)
+                         r.period_start, r.period_end, r.total_return, r.benchmark_return, r.created_at)
             for r in rows
         ]
 

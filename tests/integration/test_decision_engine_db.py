@@ -367,7 +367,7 @@ class TestContextBuilder:
 
 
 class TestBacktestRepository:
-    def test_eventi_del_solo_run_e_risultato(self, full, app):
+    def test_storico_dellintero_portfolio_e_risultato(self, full, app):
         a, p = _asset(full, "TESTDE1"), _portfolio(full, "test-de-1", cash=1_000.0)
         store = PostgresDecisionStore(app)
         portfolio = store.portfolio(p)
@@ -380,20 +380,32 @@ class TestBacktestRepository:
 
         with app.transaction() as tx:
             repo = BacktestRepository(tx)
-            events = repo.position_events(p, runs[0])
-            empty = repo.position_events(p, -1)
-            backtest_id = repo.write_result(run_id=runs[0], pnl=1.5, sharpe_ratio=None, max_drawdown=None,
-                                            win_rate=None, period_start=NOW.date(), period_end=NOW.date())
+            events = repo.position_events(p)
+            cash = repo.cash_history(p)
+            info = repo.portfolio_info(p)
+            backtest_id = repo.write_result(portfolio_id=p, pnl=1.5, total_return=0.0015, sharpe_ratio=None,
+                                            max_drawdown=None, win_rate=None, benchmark_return=None,
+                                            period_start=NOW.date(), period_end=NOW.date())
+            row = tx.repository(BacktestResult).get_one(backtest_id=backtest_id)
 
-        assert [(e.symbol, e.operation, e.quantity) for e in events] == [("TESTDE1", "INSERT", pytest.approx(2.0))]
-        assert empty == []
-        assert backtest_id > 0
+        # entrambi i run: tutto lo storico del portfolio, non un singolo ciclo
+        assert [(e.operation, e.quantity) for e in events] == [("INSERT", pytest.approx(2.0)),
+                                                                ("UPDATE", pytest.approx(5.6))]
+        assert [c.cash for c in cash][0] == 1_000.0 and cash[-1].cash == pytest.approx(720.0)
+        assert (info.starting_capital, info.cash) == (1_000.0, pytest.approx(720.0))
+        assert (row.portfolio_id, row.run_id, row.total_return) == (p, None, pytest.approx(0.0015))
+
+    def test_benchmark_dalluniverso(self, full, app):
+        _asset(full, "TESTDE_BENCH", benchmark=True)
+
+        with app.transaction() as tx:
+            assert BacktestRepository(tx).benchmark_asset_id() is not None
 
 
 class TestBacktesterEndToEnd:
-    def test_backtest_di_un_run_reale_scrive_il_risultato(self, full, app):
+    def test_buy_e_sell_parziale_rigiocati_col_cash_reale(self, full, app, caplog):
         a, p = _asset(full, "TESTDE1"), _portfolio(full, "test-de-1", cash=1_000.0)
-        # L'ora del trade nello snapshot è il now() della transazione (circa
+        # L'ora dei trade negli snapshot è il now() della transazione (circa
         # NOW): una barra prima, una dopo.
         _prices(full, a, [(NOW - timedelta(hours=1), 50.0), (NOW + timedelta(hours=1), 60.0)])
         store = PostgresDecisionStore(app)
@@ -402,16 +414,25 @@ class TestBacktesterEndToEnd:
         store.record_decision(run_id=run_id, portfolio_id=p, asset=asset, as_of=NOW,
                               decision=_decision("BUY", 0.5), context={},
                               trade=TradeRequest(action="BUY", size_pct=0.5, price=50.0))
+        store.record_decision(run_id=run_id, portfolio_id=p, asset=asset, as_of=NOW,
+                              decision=_decision("SELL", 0.5), context={},
+                              trade=TradeRequest(action="SELL", size_pct=0.5, price=55.0))
 
-        metrics, backtest_id = Backtester(PostgresBacktestStore(app)).run(
-            portfolio_id=p, run_id=run_id, as_of=NOW + timedelta(hours=2)
-        )
+        with caplog.at_level("WARNING"):
+            metrics, backtest_id = Backtester(PostgresBacktestStore(app)).run(
+                portfolio_id=p, as_of=NOW + timedelta(hours=2)
+            )
 
         with full.transaction() as tx:
             row = tx.repository(BacktestResult).get_one(backtest_id=backtest_id)
-        # 500 investiti a 50 = 10 quote; ultimo prezzo 60 -> +100
-        assert metrics.pnl == pytest.approx(100.0)
-        assert row.run_id == run_id and row.pnl == pytest.approx(100.0)
+            real_cash = tx.repository(Portfolio).get_one(portfolio_id=p).cash
+        # 500 investiti a 50 = 10 quote; 5 vendute a 55 (+275 di cash, +25 di
+        # profitto); le 5 rimaste valgono 60 a fine periodo (+50) -> +75
+        assert metrics.pnl == pytest.approx(75.0)
+        assert metrics.trades == 2
+        assert metrics.final_cash == pytest.approx(real_cash) == pytest.approx(775.0)
+        assert "cash simulato" not in caplog.text
+        assert (row.portfolio_id, row.pnl) == (p, pytest.approx(75.0))
 
 
 # --- DecisionEngine end-to-end ---------------------------------------------------------

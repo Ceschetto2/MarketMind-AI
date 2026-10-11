@@ -79,6 +79,15 @@ def test_init_portfolio_rejects_non_positive_ids(bad_id):
         SystemdJobLauncher(FakeRunner()).init_portfolio(bad_id)
 
 
+def test_backtest_starts_the_template_instance():
+    runner = FakeRunner()
+
+    unit = SystemdJobLauncher(runner).backtest(5)
+
+    assert unit == "marketmind-backtest@5.service"
+    assert runner.calls == [["systemctl", "--user", "start", "--no-block", "marketmind-backtest@5.service"]]
+
+
 def test_systemctl_failure_becomes_job_launch_error():
     launcher = SystemdJobLauncher(FakeRunner(returncode=5))
 

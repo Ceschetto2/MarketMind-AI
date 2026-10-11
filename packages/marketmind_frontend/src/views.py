@@ -108,14 +108,20 @@ class RunView:
 
 @dataclass(frozen=True)
 class BacktestView:
+    """Un backtest dell'intero portfolio su un periodo. `run_id` è valorizzato
+    solo per i risultati del vecchio backtest per run (migrazione `0020`)."""
+
     backtest_id: int
-    run_id: int
+    run_id: int | None
     pnl: float
     sharpe_ratio: float | None
     max_drawdown: float | None
     win_rate: float | None
     period_start: date
     period_end: date
+    total_return: float | None = None
+    benchmark_return: float | None = None
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)

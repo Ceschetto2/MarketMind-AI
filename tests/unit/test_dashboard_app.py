@@ -96,12 +96,13 @@ class TestTables:
         assert pd.isna(df["Errore"].iloc[1])
 
     def test_backtests_table(self):
-        b = BacktestView(1, 41, -226.0, None, -0.01, 0.25, date(2026, 9, 14), date(2026, 9, 14))
+        b = BacktestView(1, None, 75.0, 1.2, -0.01, 0.5, date(2026, 9, 14), date(2026, 10, 11), 0.0075, 0.02, T0)
 
         df = _backtests_dataframe([b])
 
-        assert list(df["Run"]) == [41]
-        assert list(df["Periodo"]) == ["2026-09-14 → 2026-09-14"]
+        assert list(df["Periodo"]) == ["2026-09-14 → 2026-10-11"]
+        assert list(df["Rendimento"]) == [0.0075]
+        assert list(df["SPY stesso periodo"]) == [0.02]
 
     def test_ingestion_table_with_age_and_duration(self):
         run = IngestionRunView("fred", "market_data.t_macro_events", T0, T0 + timedelta(minutes=2), "success", 10, None)

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Double, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Double, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -102,24 +102,33 @@ class ModelDecision(Base):
 
 
 class BacktestResult(Base):
-    """Esito del backtest (vectorbt, `cash_sharing=True`) su un periodo."""
+    """Esito del backtest (vectorbt, `cash_sharing=True`) dell'intero storico
+    di un portfolio su un periodo (migrazione `0020`). `run_id` è valorizzato
+    solo per i risultati del vecchio backtest per run."""
 
     __tablename__ = "t_backtest_results"
 
     backtest_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    run_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey(f"{SCHEMA}.t_model_runs.run_id"), nullable=False
+    portfolio_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("portfolio.t_portfolios.portfolio_id"), nullable=False
     )
+    run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey(f"{SCHEMA}.t_model_runs.run_id"))
     pnl: Mapped[float] = mapped_column(Double, nullable=False)
+    total_return: Mapped[float | None] = mapped_column(Double)
     sharpe_ratio: Mapped[float | None] = mapped_column(Double)
     max_drawdown: Mapped[float | None] = mapped_column(Double)
     win_rate: Mapped[float | None] = mapped_column(Double)
+    benchmark_return: Mapped[float | None] = mapped_column(Double)
     period_start: Mapped[date] = mapped_column(nullable=False)
     period_end: Mapped[date] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
 
     run: Mapped["ModelRun"] = relationship(back_populates="backtest_results")
 
     __table_args__ = (
         Index("ib_backtest_results_run_id", "run_id"),
+        Index("ib_backtest_results_portfolio_id", "portfolio_id"),
         {"schema": SCHEMA},
     )

@@ -171,12 +171,15 @@ def _backtests_dataframe(results: Sequence[BacktestView]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "Run": b.run_id,
+                "Calcolato": _local(b.created_at),
                 "Periodo": f"{b.period_start} → {b.period_end}",
                 "PnL": b.pnl,
+                "Rendimento": b.total_return,
+                "SPY stesso periodo": b.benchmark_return,
                 "Sharpe": b.sharpe_ratio,
                 "Max drawdown": b.max_drawdown,
                 "Win rate": b.win_rate,
+                "Run (vecchio POC)": b.run_id,
             }
             for b in results
         ]
@@ -424,14 +427,25 @@ def _portfolio_page() -> None:
         else:
             st.info("Nessun ciclo ancora eseguito.")
     with tabs[4]:
+        st.caption(
+            "Rigioca l'intero storico di trade del portfolio su vectorbt e calcola le metriche dalla nascita "
+            "del portfolio a oggi. Per un periodo diverso: "
+            "`python -m marketmind_llm_decision_engine backtest <portfolio> --start AAAA-MM-GG --end AAAA-MM-GG`."
+        )
+        if st.button("Calcola backtest", key=f"backtest_{p.portfolio_id}"):
+            _launch(lambda: _launcher().backtest(p.portfolio_id), "Backtest avviato")
+            st.rerun()
+        _show_flash()
         if data.backtests:
             st.dataframe(_backtests_dataframe(data.backtests), hide_index=True, use_container_width=True,
-                         column_config={"PnL": st.column_config.NumberColumn(format="$%.2f"),
+                         column_config={"Calcolato": st.column_config.DatetimeColumn(format="DD/MM/YY HH:mm"),
+                                        "PnL": st.column_config.NumberColumn(format="$%.2f"),
+                                        "Rendimento": st.column_config.NumberColumn(format="percent"),
+                                        "SPY stesso periodo": st.column_config.NumberColumn(format="percent"),
                                         "Max drawdown": st.column_config.NumberColumn(format="percent"),
                                         "Win rate": st.column_config.NumberColumn(format="percent")})
         else:
             st.info("Nessun backtest per questo portfolio.")
-        st.caption("Un backtest si lancia da CLI: `python -m marketmind_llm_decision_engine backtest <portfolio> <run>`.")
 
 
 # --- pagina Gestione --------------------------------------------------------------

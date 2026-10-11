@@ -13,6 +13,9 @@ mostra.
 fine del container, tenendo ferma la pagina per minuti. L'esito si legge
 dopo, dal DB o da `status()`.
 
+Il backtest di un portfolio parte allo stesso modo
+(`marketmind-backtest@<id>`).
+
 Funziona dove gira systemd con quelle unit, cioè sul laptop col deploy
 Quadlet. Sul server Docker (`deploy/docker/`, job in crontab) non c'è
 ancora un equivalente: punto aperto.
@@ -32,6 +35,7 @@ PIPELINE_PREFIX = "marketmind-ingest-"
 PIPELINE_SUFFIX = ".service"
 DECIDE_UNIT = "marketmind-decide.service"
 INIT_PORTFOLIO_UNIT = "marketmind-init-portfolio@{portfolio_id}.service"
+BACKTEST_UNIT = "marketmind-backtest@{portfolio_id}.service"
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -46,6 +50,12 @@ class JobStatus:
     active_state: str
     result: str
     finished: str
+
+
+def _valid_id(portfolio_id: int) -> int:
+    if not isinstance(portfolio_id, int) or portfolio_id <= 0:
+        raise JobLaunchError(f"portfolio_id non valido: {portfolio_id!r}")
+    return portfolio_id
 
 
 class SystemdJobLauncher:
@@ -80,9 +90,13 @@ class SystemdJobLauncher:
     def init_portfolio(self, portfolio_id: int) -> str:
         """Bootstrap di un portfolio (`init-portfolio <id>`) tramite la unit
         template `marketmind-init-portfolio@.container`."""
-        if not isinstance(portfolio_id, int) or portfolio_id <= 0:
-            raise JobLaunchError(f"portfolio_id non valido: {portfolio_id!r}")
-        return self._start(INIT_PORTFOLIO_UNIT.format(portfolio_id=portfolio_id))
+        return self._start(INIT_PORTFOLIO_UNIT.format(portfolio_id=_valid_id(portfolio_id)))
+
+    def backtest(self, portfolio_id: int) -> str:
+        """Backtest dell'intero storico del portfolio (`backtest <id>`) tramite
+        la unit template `marketmind-backtest@.container`; il risultato si
+        aggiunge a `t_backtest_results`."""
+        return self._start(BACKTEST_UNIT.format(portfolio_id=_valid_id(portfolio_id)))
 
     def status(self, unit: str) -> JobStatus:
         output = self._systemctl(
