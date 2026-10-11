@@ -1,0 +1,34 @@
+# Quadlet Podman rootless, unit template per il bootstrap di un portfolio
+# (`init-portfolio <id>`: watchlist scelta dall'LLM più un primo giro di
+# decisioni), vedi `Market Mind AI - Docs/Decision Engine/03_bootstrap_e_watchlist.md`.
+#
+# Template perché i portfolio nascono a runtime: l'istanza è il
+# `portfolio_id` (`%i`), avviata dalla dashboard (pagina Gestione,
+# `marketmind_frontend.jobs`) o a mano:
+#
+#   systemctl --user start marketmind-init-portfolio@<portfolio_id>.service
+#
+# Stessa immagine, ruolo Postgres (`marketmind_app`) e chiave Gemini di
+# `marketmind-decide.container`. Nessun timer e nessuna sezione [Install]: il
+# bootstrap è un passo esplicito, mai automatico.
+
+[Unit]
+Description=MarketMind AI — bootstrap del portfolio %i
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
+
+[Container]
+Image=localhost/marketmind-llm-decision-engine:latest
+ContainerName=marketmind-init-portfolio-%i
+Network=marketmind.network
+Exec=init-portfolio %i
+Secret=marketmind-app-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_app
+Secret=marketmind-gemini-api-key,type=env,target=GEMINI_API_KEY
+
+[Service]
+Type=oneshot

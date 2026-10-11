@@ -67,6 +67,18 @@ class PortfolioState(BaseModel):
     positions: list[PortfolioPositionSnippet]
 
 
+class PreviousDecision(BaseModel):
+    """La decisione da rivalutare, presente nel contesto solo in un
+    ricontrollo chiesto dall'LLM stesso (`DeferralRequest`): senza, il modello
+    rivaluterebbe alla cieca, e potrebbe rinviare di nuovo per lo stesso
+    motivo."""
+
+    ts: datetime
+    decision: str
+    reasoning: Optional[str] = None
+    recheck_reason: Optional[str] = None
+
+
 class AssetSummary(BaseModel):
     """Un candidato dell'universo osservato, per il bootstrap di un
     portfolio — identità, non dati di mercato: il bootstrap sceglie uno
@@ -95,9 +107,8 @@ class DecisionContext(BaseModel):
 
     `as_of` è il momento rispetto a cui il context builder ha applicato il
     filtro no-look-ahead (`ts <= as_of` su ogni query) — di norma l'istante
-    corrente, ma esplicito e parametrizzabile per permettere in futuro sia
-    un rinvio (`llm.schemas.DeferralRequest`) sia una simulazione storica
-    (Backtesting Engine). `portfolio` è isolato per disegno: costruito
+    corrente, ma esplicito e parametrizzabile (es. per una simulazione
+    storica). `previous_decision` è valorizzato solo in un ricontrollo. `portfolio` è isolato per disegno: costruito
     leggendo solo lo stato di *questo* portfolio, mai di altri
     (`PortfolioRepository`, un `portfolio_id` per chiamata).
     """
@@ -110,3 +121,4 @@ class DecisionContext(BaseModel):
     news: list[NewsSnippet]
     macro_events: list[MacroSnippet]
     company_events: list[CompanyEventSnippet]
+    previous_decision: Optional[PreviousDecision] = None

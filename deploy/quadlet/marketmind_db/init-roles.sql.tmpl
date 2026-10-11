@@ -1,7 +1,7 @@
--- Template SQL per i due ruoli Postgres applicativi (agenda #27, disegno
+-- Template SQL per i tre ruoli Postgres applicativi (agenda #27, disegno
 -- completo in `Market Mind AI - Docs/db/03_utenti_db.md`).
 --
--- Le due password sono sostituite in bash da deploy.sh (funzione
+-- Le tre password sono sostituite in bash da deploy.sh (funzione
 -- init_db_roles) prima di essere inviate a psql via stdin: mai scritte su
 -- disco, mai passate come argomento di riga di comando a `podman`/`psql`
 -- (quindi mai visibili in `ps`, e mai in cronologia/log) — solo variable
@@ -70,3 +70,30 @@ GRANT SELECT ON ALL TABLES IN SCHEMA market_data TO marketmind_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA decisions GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA portfolio GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO marketmind_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA market_data GRANT SELECT ON TABLES TO marketmind_app;
+
+-- --- marketmind_readonly: sola lettura, per la dashboard ---
+-- (letture di portfolio, decisioni, prezzi ed esito delle pipeline; nessun
+-- accesso a `raw`. Le scritture di gestione della dashboard passano da
+-- marketmind_app, i job dai container con i propri ruoli.)
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'marketmind_readonly') THEN
+        CREATE ROLE marketmind_readonly LOGIN;
+    END IF;
+END
+$$;
+
+ALTER ROLE marketmind_readonly WITH LOGIN PASSWORD '%%MARKETMIND_READONLY_PASSWORD%%';
+
+GRANT USAGE ON SCHEMA market_data, decisions, portfolio, audit TO marketmind_readonly;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA market_data TO marketmind_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA decisions TO marketmind_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA portfolio TO marketmind_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA audit TO marketmind_readonly;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA market_data GRANT SELECT ON TABLES TO marketmind_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA decisions GRANT SELECT ON TABLES TO marketmind_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA portfolio GRANT SELECT ON TABLES TO marketmind_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT SELECT ON TABLES TO marketmind_readonly;

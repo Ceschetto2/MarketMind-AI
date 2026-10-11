@@ -7,8 +7,9 @@ finti.
 Il modello dei cicli: un ciclo è un solo run. All'apertura (portfolio
 dovuto) si crea il run, si fissa subito il prossimo ciclo a +intervallo e
 si decide su tutta la watchlist; a ogni scatto successivo, dentro il ciclo,
-si decide solo sugli asset della watchlist senza decisione in quel run,
-aggiungendo le decisioni allo stesso run.
+si decide solo sugli asset della watchlist senza decisione in quel run, o
+il cui ricontrollo chiesto dall'LLM (rinvio) è scaduto, aggiungendo le
+decisioni allo stesso run.
 """
 
 from __future__ import annotations
@@ -28,9 +29,10 @@ from marketmind_llm_decision_engine.decision_engine.schemas import (
     PortfolioState,
     PricePoint,
 )
-from marketmind_llm_decision_engine.decision_engine.store import RunRef
+from marketmind_llm_decision_engine.decision_engine.engine import MAX_RECHECKS_PER_CYCLE
+from marketmind_llm_decision_engine.decision_engine.store import DecisionRef, RunRef
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
-from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.schemas import Decision, DeferralRequest, WatchlistSelection
 from marketmind_llm_decision_engine.repositories.market_context import AssetRef
 from marketmind_llm_decision_engine.repositories.portfolio import PortfolioRef
 
@@ -55,6 +57,10 @@ class RecordedDecision:
     trade: object
     context: dict
     as_of: datetime
+    asset_id: int = 0
+    reasoning: str | None = None
+    recheck_at: datetime | None = None
+    recheck_reason: str | None = None
 
 
 @dataclass
@@ -119,15 +125,23 @@ class FakeStore:
         run_id, run = max(mine, key=lambda x: (x[1]["ts"], x[0]))
         return RunRef(run_id=run_id, ts=run["ts"])
 
-    def decided_asset_ids(self, run_id):
-        return {a.asset_id for a in UNIVERSE for d in self.decisions if d.run_id == run_id and d.symbol == a.symbol}
+    def run_decisions(self, run_id):
+        return [
+            DecisionRef(i + 1, d.asset_id, d.as_of, d.decision, d.reasoning, d.recheck_at, d.recheck_reason)
+            for i, d in enumerate(self.decisions)
+            if d.run_id == run_id
+        ]
 
     def finish_run(self, run_id, status, error_message=None):
         self.runs[run_id].update(status=status, error=error_message)
         self.runs[run_id]["finishes"] += 1
 
-    def record_decision(self, *, run_id, portfolio_id, asset, as_of, decision, context, trade):
-        self.decisions.append(RecordedDecision(run_id, portfolio_id, asset.symbol, decision.decision, trade, context, as_of))
+    def record_decision(self, *, run_id, portfolio_id, asset, as_of, decision, context, trade, recheck_at=None):
+        reason = decision.defer.reason if decision.defer and recheck_at else None
+        self.decisions.append(
+            RecordedDecision(run_id, portfolio_id, asset.symbol, decision.decision, trade, context, as_of,
+                             asset.asset_id, decision.reasoning, recheck_at, reason)
+        )
         return trade is not None
 
     def schedule_next_decision(self, portfolio_id, at):
@@ -135,19 +149,26 @@ class FakeStore:
 
 
 class FakeProvider:
-    def __init__(self, decisions=None, failing=(), selection=("AAPL", "MSFT")):
+    def __init__(self, decisions=None, failing=(), selection=("AAPL", "MSFT"), defers=None):
         self.decisions = decisions or {}
         self.failing = set(failing)
         self.selection = list(selection)
+        # symbol -> ore di rinvio richieste a ogni decisione su quell'asset
+        self.defers = dict(defers or {})
         self.calls: list[str] = []
+        self.contexts: list[dict] = []
 
     def decide(self, context):
         symbol = context["symbol"]
         self.calls.append(symbol)
+        self.contexts.append(context)
         if symbol in self.failing:
             raise DecisionError(f"500 INTERNAL per {symbol}")
         action = self.decisions.get(symbol, "HOLD")
-        return Decision(decision=action, size_pct=None if action == "HOLD" else 0.25, reasoning="r")
+        defer = None
+        if symbol in self.defers:
+            defer = DeferralRequest(recheck_after_hours=self.defers[symbol], reason=f"evento su {symbol}")
+        return Decision(decision=action, size_pct=None if action == "HOLD" else 0.25, reasoning="r", defer=defer)
 
     def select_watchlist(self, context):
         return WatchlistSelection(symbols=self.selection, reasoning="r")
@@ -470,3 +491,117 @@ class TestInitializePortfolio:
 
         assert first.status == "partial"
         assert provider.calls == ["AAPL"] and retry.run_id == first.run_id
+
+
+class TestRinvio:
+    """L'LLM può chiedere di rivalutare un asset fra N ore, dentro il ciclo in
+    corso. La decisione presa intanto vale (trade compreso); il ricontrollo
+    è una decisione nuova nello stesso run, ripresa dal giro orario."""
+
+    def test_il_rinvio_si_salva_sulla_decisione(self):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        provider = FakeProvider(defers={"AAPL": 24})
+        engine, _ = _engine(store, {"model-a": provider})
+
+        [result] = engine.run_due()
+
+        aapl, msft = store.decisions
+        assert (aapl.recheck_at, aapl.recheck_reason) == (NOW + timedelta(hours=24), "evento su AAPL")
+        assert msft.recheck_at is None
+        assert result.status == "success"
+
+    def test_ricontrollo_scaduto_ridecide_nello_stesso_run_con_la_decisione_precedente(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        provider = FakeProvider(decisions={"AAPL": "HOLD"}, defers={"AAPL": 2})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + timedelta(hours=1)
+        provider.calls.clear()
+        assert engine.run_due() == [] and provider.calls == []
+
+        clock.now = NOW + timedelta(hours=2)
+        provider.defers.clear()
+        provider.decisions["AAPL"] = "BUY"
+        [result] = engine.run_due()
+
+        assert provider.calls == ["AAPL"]
+        assert (result.kind, result.run_id, result.rechecks) == ("ripresa", 1, 1)
+        assert [d.symbol for d in store.decisions] == ["AAPL", "MSFT", "AAPL"]
+        previous = provider.contexts[-1]["previous_decision"]
+        assert previous["decision"] == "HOLD" and previous["recheck_reason"] == "evento su AAPL"
+        assert store.decisions[-1].trade is not None
+        assert store.decisions[-1].recheck_at is None
+        assert len(store.runs) == 1
+
+    def test_contesto_senza_decisione_precedente_fuori_dai_ricontrolli(self):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
+        provider = FakeProvider()
+        engine, _ = _engine(store, {"model-a": provider})
+
+        engine.run_due()
+
+        assert provider.contexts[0]["previous_decision"] is None
+
+    def test_rinvio_oltre_il_prossimo_ciclo_ignorato(self, caplog):
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
+        provider = FakeProvider(defers={"AAPL": 30})
+        engine = DecisionEngine(store, Factory({"model-a": provider}), clock=Clock(), interval=timedelta(days=1))
+
+        with caplog.at_level(logging.WARNING):
+            engine.run_due()
+
+        assert store.decisions[0].recheck_at is None
+        assert "oltre il prossimo ciclo" in caplog.text
+
+    def test_al_massimo_tre_ricontrolli_per_asset_per_ciclo(self, caplog):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
+        provider = FakeProvider(defers={"AAPL": 1})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+
+        with caplog.at_level(logging.WARNING):
+            for hour in range(10):
+                clock.now = NOW + timedelta(hours=hour)
+                engine.run_due()
+
+        assert len(store.decisions) == 1 + MAX_RECHECKS_PER_CYCLE
+        assert store.decisions[-1].recheck_at is None
+        assert "ricontrolli" in caplog.text
+
+    def test_ricontrollo_fallito_non_rende_failed_il_ciclo_e_si_ritenta(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL, MSFT]})
+        provider = FakeProvider(defers={"AAPL": 1})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + timedelta(hours=1)
+        provider.failing = {"AAPL"}
+        [failed] = engine.run_due()
+        clock.now = NOW + timedelta(hours=2)
+        provider.failing = set()
+        provider.defers.clear()
+        provider.calls.clear()
+        [retried] = engine.run_due()
+
+        assert failed.status == "success"
+        assert "AAPL" in failed.failures[0]
+        assert provider.calls == ["AAPL"] and retried.rechecks == 1
+        assert store.runs[1]["status"] == "success" and store.runs[1]["error"] is None
+
+    def test_il_ciclo_nuovo_ignora_i_ricontrolli_del_precedente(self):
+        clock = Clock()
+        store = FakeStore(portfolios=[ALPHA], watchlists={10: [AAPL]})
+        provider = FakeProvider(defers={"AAPL": 160})
+        engine, _ = _engine(store, {"model-a": provider}, clock=clock)
+        engine.run_due()
+
+        clock.now = NOW + INTERVAL
+        provider.defers.clear()
+        provider.calls.clear()
+        [result] = engine.run_due()
+
+        assert result.kind == "ciclo" and result.run_id == 2
+        assert provider.calls == ["AAPL"]

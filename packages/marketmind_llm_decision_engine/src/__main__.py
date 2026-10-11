@@ -2,12 +2,13 @@
 
     python -m marketmind_llm_decision_engine run-due [--dry-run]
     python -m marketmind_llm_decision_engine init-portfolio <portfolio_id> [--dry-run]
-    python -m marketmind_llm_decision_engine backtest <portfolio_id> <run_id> [--no-save]
+    python -m marketmind_llm_decision_engine backtest <portfolio_id> [--start AAAA-MM-GG] [--end AAAA-MM-GG] [--no-save]
 
 `run-due` è il comando del timer orario condiviso (`marketmind-decide`): fa
 girare i portfolio `model` il cui turno è dovuto. `init-portfolio` è il
 bootstrap di un portfolio (watchlist scelta dall'LLM più un primo giro di
-decisioni). `backtest` rigioca i trade di un run e ne salva le metriche.
+decisioni). `backtest` rigioca l'intero storico di trade di un portfolio e ne
+salva le metriche sul periodo (default: dalla nascita del portfolio a oggi).
 `--dry-run` esegue tutto, chiamate LLM comprese, ma annulla ogni scrittura.
 
 Gira come ruolo `marketmind_app` con la policy `APP` (scrittura solo su
@@ -24,7 +25,7 @@ import logging
 import signal
 import sys
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import FrameType
 
 from marketmind_common.logging_config import configure_logging
@@ -58,7 +59,8 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--dry-run", action="store_true")
     backtest = commands.add_parser("backtest", help="backtest dei trade di un run")
     backtest.add_argument("portfolio_id", type=int)
-    backtest.add_argument("run_id", type=int)
+    backtest.add_argument("--start", type=date.fromisoformat, help="inizio del periodo (default: nascita del portfolio)")
+    backtest.add_argument("--end", type=date.fromisoformat, help="fine del periodo, inclusa (default: oggi)")
     backtest.add_argument("--no-save", action="store_true", help="non scrivere in t_backtest_results")
     return parser
 
@@ -69,18 +71,19 @@ def _run(args: argparse.Namespace, db: Database) -> int:
         # backtest, e rallenterebbero ogni `run-due` orario.
         from marketmind_llm_decision_engine.backtest.engine import (
             Backtester,
-            NoTradesForRunError,
             PostgresBacktestStore,
         )
 
         try:
             metrics, backtest_id = Backtester(PostgresBacktestStore(db)).run(
                 portfolio_id=args.portfolio_id,
-                run_id=args.run_id,
                 as_of=datetime.now(timezone.utc),
+                start=args.start,
+                end=args.end,
                 save=not args.no_save,
             )
-        except (NoTradesForRunError, NotImplementedError) as exc:
+        except (ValueError, LookupError) as exc:
+            # NoTradesError e InconsistentHistoryError sono ValueError.
             logger.error("backtest non eseguibile: %s", exc)
             return 1
         logger.info("backtest %s: %s", backtest_id, metrics)

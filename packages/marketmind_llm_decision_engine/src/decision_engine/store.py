@@ -43,6 +43,20 @@ class TradeRequest:
 
 
 @dataclass(frozen=True)
+class DecisionRef:
+    """Una decisione già presa nel ciclo in corso: serve a sapere quali asset
+    hanno una decisione e quali hanno un ricontrollo scaduto (rinvio)."""
+
+    decision_id: int
+    asset_id: int
+    ts: datetime
+    decision: str
+    reasoning: str | None
+    recheck_at: datetime | None
+    recheck_reason: str | None
+
+
+@dataclass(frozen=True)
 class RunRef:
     """Il run di un ciclo: `ts` è l'inizio del ciclo."""
 
@@ -57,7 +71,7 @@ class DecisionStore(Protocol):
 
     def latest_run(self, portfolio_id: int) -> RunRef | None: ...
 
-    def decided_asset_ids(self, run_id: int) -> set[int]: ...
+    def run_decisions(self, run_id: int) -> list[DecisionRef]: ...
 
     def portfolio(self, portfolio_id: int) -> PortfolioRef: ...
 
@@ -85,6 +99,7 @@ class DecisionStore(Protocol):
         decision: Decision,
         context: dict[str, Any],
         trade: TradeRequest | None,
+        recheck_at: datetime | None = None,
     ) -> bool: ...
 
     def schedule_next_decision(self, portfolio_id: int, at: datetime) -> None: ...
@@ -104,9 +119,12 @@ class PostgresDecisionStore:
             run = DecisionRepository(tx).latest_run(portfolio_id)
             return None if run is None else RunRef(run_id=run.run_id, ts=run.ts)
 
-    def decided_asset_ids(self, run_id: int) -> set[int]:
+    def run_decisions(self, run_id: int) -> list[DecisionRef]:
         with self.db.transaction() as tx:
-            return DecisionRepository(tx).decided_asset_ids(run_id)
+            return [
+                DecisionRef(d.decision_id, d.asset_id, d.ts, d.decision, d.reasoning, d.recheck_at, d.recheck_reason)
+                for d in DecisionRepository(tx).run_decisions(run_id)
+            ]
 
     def portfolio(self, portfolio_id: int) -> PortfolioRef:
         with self.db.transaction() as tx:
@@ -156,13 +174,15 @@ class PostgresDecisionStore:
         decision: Decision,
         context: dict[str, Any],
         trade: TradeRequest | None,
+        recheck_at: datetime | None = None,
     ) -> bool:
-        """Registra la decisione e, se richiesto, esegue il trade sullo stato
-        letto nella stessa transazione. Restituisce se il trade ha spostato
-        cash o posizione."""
+        """Registra la decisione (col ricontrollo accettato dal motore, se
+        c'è) e, se richiesto, esegue il trade sullo stato letto nella stessa
+        transazione. Restituisce se il trade ha spostato cash o posizione."""
         with track_model_run(run_id), self.db.transaction() as tx:
             DecisionRepository(tx).write_decision(
-                run_id=run_id, asset_id=asset.asset_id, ts=as_of, decision=decision, context_snapshot=context
+                run_id=run_id, asset_id=asset.asset_id, ts=as_of, decision=decision, context_snapshot=context,
+                recheck_at=recheck_at,
             )
             if trade is None:
                 return False

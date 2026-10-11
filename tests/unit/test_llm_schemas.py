@@ -72,37 +72,36 @@ class TestDecisionSizePct:
 
 
 class TestDeferralRequest:
-    def test_valid_construction_with_refresh_hints(self):
-        defer = DeferralRequest(
-            retry_after_minutes=15,
-            refresh_pipeline="finnhub-news",
-            refresh_symbol="AAPL",
-        )
+    """Rinvio: l'LLM chiede di essere rivalutato fra N ore, dentro il ciclo in
+    corso (cadenza di 7 giorni, quindi al massimo 167 ore). Nessun refresh
+    ad-hoc dei dati: le pipeline orarie li aggiornano comunque."""
 
-        assert defer.retry_after_minutes == 15
-        assert defer.refresh_pipeline == "finnhub-news"
-        assert defer.refresh_symbol == "AAPL"
+    def test_valid_construction(self):
+        defer = DeferralRequest(recheck_after_hours=24, reason="trimestrale domani")
 
-    def test_refresh_hints_default_to_none(self):
-        defer = DeferralRequest(retry_after_minutes=30)
+        assert defer.recheck_after_hours == 24
+        assert defer.reason == "trimestrale domani"
 
-        assert defer.refresh_pipeline is None
-        assert defer.refresh_symbol is None
-
-    @pytest.mark.parametrize("retry_after_minutes", [0, -5])
-    def test_rejects_non_positive_delay(self, retry_after_minutes):
+    @pytest.mark.parametrize("hours", [0, -5, 168])
+    def test_rejects_delay_outside_the_cycle(self, hours):
         with pytest.raises(ValidationError):
-            DeferralRequest(retry_after_minutes=retry_after_minutes)
+            DeferralRequest(recheck_after_hours=hours, reason="r")
+
+    def test_reason_is_required(self):
+        with pytest.raises(ValidationError):
+            DeferralRequest(recheck_after_hours=2)
+
+    def test_no_refresh_hints_anymore(self):
+        assert set(DeferralRequest.model_fields) == {"recheck_after_hours", "reason"}
 
     def test_decision_accepts_defer(self):
         decision = Decision(
             decision="HOLD",
             reasoning="in attesa dell'annuncio earnings",
-            defer=DeferralRequest(retry_after_minutes=15, refresh_pipeline="finnhub-news"),
+            defer=DeferralRequest(recheck_after_hours=24, reason="earnings domani"),
         )
 
-        assert decision.defer.retry_after_minutes == 15
-        assert decision.defer.refresh_pipeline == "finnhub-news"
+        assert decision.defer.recheck_after_hours == 24
 
 
 class TestWatchlistSelection:

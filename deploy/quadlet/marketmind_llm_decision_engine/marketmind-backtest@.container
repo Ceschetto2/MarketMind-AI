@@ -1,0 +1,35 @@
+# Quadlet Podman rootless, unit template per il backtest dell'intero storico
+# di un portfolio (`backtest <id>`, metriche dalla nascita del portfolio a
+# oggi, salvate in `decisions.t_backtest_results`), vedi
+# `Market Mind AI - Docs/Backtest/00_motore_backtest.md`.
+#
+# Template perché i portfolio nascono a runtime: l'istanza è il
+# `portfolio_id` (`%i`), avviata dalla dashboard (scheda Backtest,
+# `marketmind_frontend.jobs`) o a mano:
+#
+#   systemctl --user start marketmind-backtest@<portfolio_id>.service
+#
+# Stessa immagine e ruolo Postgres (`marketmind_app`) di
+# `marketmind-decide.container`, senza la chiave Gemini: il backtest non
+# chiama l'LLM. Per un periodo diverso si usa il comando direttamente
+# (`--start`/`--end`). Nessun timer e nessuna sezione [Install].
+
+[Unit]
+Description=MarketMind AI — backtest del portfolio %i
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
+
+[Container]
+Image=localhost/marketmind-llm-decision-engine:latest
+ContainerName=marketmind-backtest-%i
+Network=marketmind.network
+Exec=backtest %i
+Secret=marketmind-app-password,type=env,target=POSTGRES_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+Environment=POSTGRES_USER=marketmind_app
+
+[Service]
+Type=oneshot

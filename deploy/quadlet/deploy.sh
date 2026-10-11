@@ -48,6 +48,10 @@
 #                                    marketmind_app (scrittura
 #                                    decisions+portfolio, lettura
 #                                    market_data). Stessa logica di sopra.
+#   MARKETMIND_READONLY_PASSWORD    password del ruolo Postgres
+#                                    marketmind_readonly (sola lettura, usato
+#                                    dalla dashboard in locale). Nessun
+#                                    secret Podman: nessun container lo usa.
 #   FINNHUB_API_KEY                 chiave API Finnhub, obbligatoria (nessun
 #   FRED_API_KEY                    fallback interattivo: sono chiavi di
 #   FMP_API_KEY                     terze parti, non password scelte da chi
@@ -334,14 +338,17 @@ if [ "$KEEP_SECRETS" = "1" ]; then
 else
 : "${MARKETMIND_INGESTION_PASSWORD:=}"
 : "${MARKETMIND_APP_PASSWORD:=}"
+: "${MARKETMIND_READONLY_PASSWORD:=}"
 [ -n "$MARKETMIND_INGESTION_PASSWORD" ] || fail "MARKETMIND_INGESTION_PASSWORD non impostata nell'ambiente — necessaria per allineare la password del ruolo marketmind_ingestion (l'inserimento interattivo del solo secret non basta)"
 [ -n "$MARKETMIND_APP_PASSWORD" ] || fail "MARKETMIND_APP_PASSWORD non impostata nell'ambiente — necessaria per allineare la password del ruolo marketmind_app (l'inserimento interattivo del solo secret non basta)"
+[ -n "$MARKETMIND_READONLY_PASSWORD" ] || fail "MARKETMIND_READONLY_PASSWORD non impostata nell'ambiente — necessaria per allineare la password del ruolo marketmind_readonly (dashboard)"
 
-log "inizializzo/allineo i ruoli applicativi (marketmind_ingestion, marketmind_app)"
+log "inizializzo/allineo i ruoli applicativi (marketmind_ingestion, marketmind_app, marketmind_readonly)"
 [ -f "$ROLES_SQL_TEMPLATE" ] || fail "manca $ROLES_SQL_TEMPLATE"
 rendered_sql="$(<"$ROLES_SQL_TEMPLATE")"
 rendered_sql="${rendered_sql//%%MARKETMIND_INGESTION_PASSWORD%%/$MARKETMIND_INGESTION_PASSWORD}"
 rendered_sql="${rendered_sql//%%MARKETMIND_APP_PASSWORD%%/$MARKETMIND_APP_PASSWORD}"
+rendered_sql="${rendered_sql//%%MARKETMIND_READONLY_PASSWORD%%/$MARKETMIND_READONLY_PASSWORD}"
 printf '%s\n' "$rendered_sql" | podman exec -i "$DB_CONTAINER_NAME" psql -U marketmind -d marketmind \
     || fail "init-roles.sql.tmpl fallito — vedi output psql sopra"
 log "ruoli applicativi allineati"

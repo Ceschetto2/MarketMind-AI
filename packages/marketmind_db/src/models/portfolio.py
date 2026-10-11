@@ -17,7 +17,7 @@ mutabile; `t_portfolio_snapshots`/`t_portfolio_position_snapshots` sono
 storico append-only alimentato da due trigger Postgres dedicati e
 tipizzati (`fn_portfolio_snapshot`/`fn_portfolio_position_snapshot`) — non
 il meccanismo generico `audit.fn_audit_log()` di `t_audit_logs`, perché
-un'equity curve richiede sommare `quantity`/`cash`/`equity_value`
+un'equity curve richiede sommare `quantity`/`cash`
 direttamente in SQL, non estrarli da JSONB. Le due tabelle di storico sono
 di sola lettura da ORM, come `AuditLog`.
 
@@ -57,9 +57,10 @@ class Portfolio(Base):
     dalle decisioni dell'LLM (`'model'`) dal benchmark di confronto
     (`'benchmark'`, es. SPY buy & hold) — righe distinte dello stesso
     meccanismo, nessuna tabella o colonna speciale per il benchmark. `cash`
-    ed `equity_value` sono mutabili, scritti dallo strato applicativo a ogni
-    trade/mark-to-market; il trigger su questa tabella si limita a
-    fotografarli in `t_portfolio_snapshots` ad ogni cambiamento.
+    è mutabile, scritto dallo strato applicativo a ogni trade; il trigger su
+    questa tabella si limita a fotografarlo in `t_portfolio_snapshots` ad
+    ogni cambiamento. Il valore di mercato del portfolio non è salvato: si
+    calcola da cash, posizioni e prezzi (migrazione `0018`).
     `next_decision_at` è la cadenza per-portfolio del Decision Engine —
     NULL finché il portfolio non ha ancora girato un primo giro, poi
     scritta dal motore stesso a ogni giro (`decision_engine.engine`), mai
@@ -73,7 +74,6 @@ class Portfolio(Base):
     portfolio_type: Mapped[str] = mapped_column(String(20), nullable=False)
     starting_capital: Mapped[float] = mapped_column(Double, nullable=False)
     cash: Mapped[float] = mapped_column(Double, nullable=False)
-    equity_value: Mapped[float] = mapped_column(Double, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False
     )
@@ -150,7 +150,6 @@ class PortfolioSnapshot(Base):
         BigInteger, ForeignKey("decisions.t_model_runs.run_id")
     )
     cash: Mapped[float] = mapped_column(Double, nullable=False)
-    equity_value: Mapped[float] = mapped_column(Double, nullable=False)
     operation: Mapped[str] = mapped_column(String(10), nullable=False)
     changed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -65,3 +66,22 @@ def get_database_url() -> str:
     port = os.environ.get("POSTGRES_PORT", "5432")
     db = os.environ.get("POSTGRES_DB", "marketmind")
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"
+
+
+def get_role_database_url(user: str, password_setting: str) -> str | None:
+    """Connection string per un ruolo Postgres applicativo diverso da
+    `POSTGRES_USER` (es. `marketmind_readonly` per la dashboard): stessi
+    `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_DB`, password letta da
+    `password_setting` (o dal file in `<password_setting>_FILE`).
+
+    `None` se la password del ruolo non è configurata: è il chiamante a
+    decidere se ripiegare su `get_database_url()`. `DATABASE_URL` non è
+    considerata, contiene già le credenziali di un altro ruolo.
+    """
+    password = _read_setting(password_setting)
+    if not password:
+        return None
+    host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    db = os.environ.get("POSTGRES_DB", "marketmind")
+    return f"postgresql+psycopg://{user}:{quote(password, safe='')}@{host}:{port}/{db}"

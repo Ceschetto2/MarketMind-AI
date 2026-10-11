@@ -4,7 +4,9 @@ decisioni.
 Un run è un ciclo di decisioni di un portfolio: nasce `running` all'apertura
 del ciclo, e ogni tentativo (l'apertura e le riprese successive sugli asset
 ancora senza decisione) ne aggiorna l'esito `success`/`partial`/`failed`
-(migrazione `0017`). Le decisioni sono sempre righe nuove, mai aggiornate.
+(migrazione `0017`). Le decisioni sono sempre righe nuove, mai aggiornate:
+anche un ricontrollo (rinvio chiesto dall'LLM, `recheck_at`, migrazione
+`0019`) è una decisione nuova sullo stesso asset nello stesso run.
 """
 
 from __future__ import annotations
@@ -67,10 +69,11 @@ class DecisionRepository:
         ) or [None]
         return run
 
-    def decided_asset_ids(self, run_id: int) -> set[int]:
-        """Gli asset che hanno già una decisione in questo run."""
-        return set(
-            self.tx.repository(ModelDecision).values("asset_id", where={"run_id": run_id}, distinct=True, limit=None)
+    def run_decisions(self, run_id: int) -> list[ModelDecision]:
+        """Le decisioni del run in ordine di inserimento: chi ha già una
+        decisione, e l'ultima per asset (col suo eventuale ricontrollo)."""
+        return self.tx.repository(ModelDecision).select(
+            where={"run_id": run_id}, order_by=("decision_id",), limit=None
         )
 
     def write_decision(
@@ -81,9 +84,12 @@ class DecisionRepository:
         ts: datetime,
         decision: Decision,
         context_snapshot: dict[str, Any],
+        recheck_at: datetime | None = None,
     ) -> int:
         """`context_snapshot` è il contesto esatto passato al modello: audit e
-        riproducibilità della decisione."""
+        riproducibilità della decisione. `recheck_at` è il ricontrollo
+        accettato dal motore; senza, il motivo del rinvio non si salva (un
+        rinvio scartato non deve risultare in attesa)."""
         [row] = self.tx.repository(ModelDecision).insert_returning(
             [
                 {
@@ -95,6 +101,8 @@ class DecisionRepository:
                     "reasoning": decision.reasoning,
                     "size_pct": decision.size_pct,
                     "context_snapshot": context_snapshot,
+                    "recheck_at": recheck_at,
+                    "recheck_reason": decision.defer.reason if recheck_at and decision.defer else None,
                 }
             ],
             returning=("decision_id",),

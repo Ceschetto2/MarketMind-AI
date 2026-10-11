@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import signal
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
 from marketmind_db.access import APP
 from marketmind_llm_decision_engine import __main__ as cli
-from marketmind_llm_decision_engine.backtest.engine import BacktestMetrics, NoTradesForRunError
+from marketmind_llm_decision_engine.backtest.engine import BacktestMetrics, InconsistentHistoryError, NoTradesError
 from marketmind_llm_decision_engine.decision_engine.engine import PortfolioRunResult
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
 
@@ -85,29 +85,33 @@ class TestInitPortfolio:
 
 
 class TestBacktest:
-    def test_backtest_salvato(self, mocker, database):
+    def test_backtest_salvato_sullintero_storico(self, mocker, database):
         backtester = mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value
-        metrics = BacktestMetrics(1.0, None, None, None, datetime(2026, 9, 1).date(), datetime(2026, 9, 2).date())
+        metrics = BacktestMetrics(1.0, 0.01, None, None, None, None, 2, 99.0,
+                                  datetime(2026, 9, 1).date(), datetime(2026, 9, 2).date())
         backtester.run.return_value = (metrics, 5)
 
-        assert cli.main(["backtest", "4", "41"]) == 0
+        assert cli.main(["backtest", "4"]) == 0
 
         kwargs = backtester.run.call_args.kwargs
-        assert (kwargs["portfolio_id"], kwargs["run_id"], kwargs["save"]) == (4, 41, True)
+        assert (kwargs["portfolio_id"], kwargs["start"], kwargs["end"], kwargs["save"]) == (4, None, None, True)
         assert kwargs["as_of"].tzinfo is timezone.utc
 
-    def test_no_save(self, mocker, database):
+    def test_periodo(self, mocker, database):
         backtester = mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value
         backtester.run.return_value = (mocker.Mock(), None)
 
-        cli.main(["backtest", "4", "41", "--no-save"])
+        cli.main(["backtest", "4", "--start", "2026-09-15", "--end", "2026-10-01", "--no-save"])
 
-        assert backtester.run.call_args.kwargs["save"] is False
+        kwargs = backtester.run.call_args.kwargs
+        assert (kwargs["start"], kwargs["end"], kwargs["save"]) == (date(2026, 9, 15), date(2026, 10, 1), False)
 
-    def test_run_senza_trade(self, mocker, database):
-        mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value.run.side_effect = NoTradesForRunError("nessun trade")
+    @pytest.mark.parametrize("error", [NoTradesError("nessun trade"), InconsistentHistoryError("storico"),
+                                       ValueError("periodo non valido")])
+    def test_backtest_non_eseguibile(self, mocker, database, error):
+        mocker.patch("marketmind_llm_decision_engine.backtest.engine.Backtester").return_value.run.side_effect = error
 
-        assert cli.main(["backtest", "4", "41"]) == 1
+        assert cli.main(["backtest", "4"]) == 1
 
 
 def test_run_due_non_importa_vectorbt():

@@ -41,7 +41,7 @@ from marketmind_llm_decision_engine.decision_engine.engine import DecisionEngine
 from marketmind_llm_decision_engine.decision_engine.store import PostgresDecisionStore, TradeRequest
 from marketmind_llm_decision_engine.decision_engine.trading import PositionState, plan_trade
 from marketmind_llm_decision_engine.llm.exceptions import DecisionError
-from marketmind_llm_decision_engine.llm.schemas import Decision, WatchlistSelection
+from marketmind_llm_decision_engine.llm.schemas import Decision, DeferralRequest, WatchlistSelection
 from marketmind_llm_decision_engine.repositories import (
     BacktestRepository,
     DecisionRepository,
@@ -80,7 +80,7 @@ def _portfolio(db: Database, name: str, *, cash: float = 10_000.0, portfolio_typ
         [row] = tx.repository(Portfolio).insert_returning(
             [{
                 "name": name, "portfolio_type": portfolio_type, "starting_capital": cash, "cash": cash,
-                "equity_value": cash, "created_at": NOW, "is_active": is_active,
+                "created_at": NOW, "is_active": is_active,
                 "llm_provider": "fake" if model else None, "model_version": "fake-1" if model else None,
                 "strategy_prompt": "test" if model else None, "next_decision_at": next_decision_at,
             }],
@@ -367,7 +367,7 @@ class TestContextBuilder:
 
 
 class TestBacktestRepository:
-    def test_eventi_del_solo_run_e_risultato(self, full, app):
+    def test_storico_dellintero_portfolio_e_risultato(self, full, app):
         a, p = _asset(full, "TESTDE1"), _portfolio(full, "test-de-1", cash=1_000.0)
         store = PostgresDecisionStore(app)
         portfolio = store.portfolio(p)
@@ -380,20 +380,32 @@ class TestBacktestRepository:
 
         with app.transaction() as tx:
             repo = BacktestRepository(tx)
-            events = repo.position_events(p, runs[0])
-            empty = repo.position_events(p, -1)
-            backtest_id = repo.write_result(run_id=runs[0], pnl=1.5, sharpe_ratio=None, max_drawdown=None,
-                                            win_rate=None, period_start=NOW.date(), period_end=NOW.date())
+            events = repo.position_events(p)
+            cash = repo.cash_history(p)
+            info = repo.portfolio_info(p)
+            backtest_id = repo.write_result(portfolio_id=p, pnl=1.5, total_return=0.0015, sharpe_ratio=None,
+                                            max_drawdown=None, win_rate=None, benchmark_return=None,
+                                            period_start=NOW.date(), period_end=NOW.date())
+            row = tx.repository(BacktestResult).get_one(backtest_id=backtest_id)
 
-        assert [(e.symbol, e.operation, e.quantity) for e in events] == [("TESTDE1", "INSERT", pytest.approx(2.0))]
-        assert empty == []
-        assert backtest_id > 0
+        # entrambi i run: tutto lo storico del portfolio, non un singolo ciclo
+        assert [(e.operation, e.quantity) for e in events] == [("INSERT", pytest.approx(2.0)),
+                                                                ("UPDATE", pytest.approx(5.6))]
+        assert [c.cash for c in cash][0] == 1_000.0 and cash[-1].cash == pytest.approx(720.0)
+        assert (info.starting_capital, info.cash) == (1_000.0, pytest.approx(720.0))
+        assert (row.portfolio_id, row.run_id, row.total_return) == (p, None, pytest.approx(0.0015))
+
+    def test_benchmark_dalluniverso(self, full, app):
+        _asset(full, "TESTDE_BENCH", benchmark=True)
+
+        with app.transaction() as tx:
+            assert BacktestRepository(tx).benchmark_asset_id() is not None
 
 
 class TestBacktesterEndToEnd:
-    def test_backtest_di_un_run_reale_scrive_il_risultato(self, full, app):
+    def test_buy_e_sell_parziale_rigiocati_col_cash_reale(self, full, app, caplog):
         a, p = _asset(full, "TESTDE1"), _portfolio(full, "test-de-1", cash=1_000.0)
-        # L'ora del trade nello snapshot è il now() della transazione (circa
+        # L'ora dei trade negli snapshot è il now() della transazione (circa
         # NOW): una barra prima, una dopo.
         _prices(full, a, [(NOW - timedelta(hours=1), 50.0), (NOW + timedelta(hours=1), 60.0)])
         store = PostgresDecisionStore(app)
@@ -402,16 +414,25 @@ class TestBacktesterEndToEnd:
         store.record_decision(run_id=run_id, portfolio_id=p, asset=asset, as_of=NOW,
                               decision=_decision("BUY", 0.5), context={},
                               trade=TradeRequest(action="BUY", size_pct=0.5, price=50.0))
+        store.record_decision(run_id=run_id, portfolio_id=p, asset=asset, as_of=NOW,
+                              decision=_decision("SELL", 0.5), context={},
+                              trade=TradeRequest(action="SELL", size_pct=0.5, price=55.0))
 
-        metrics, backtest_id = Backtester(PostgresBacktestStore(app)).run(
-            portfolio_id=p, run_id=run_id, as_of=NOW + timedelta(hours=2)
-        )
+        with caplog.at_level("WARNING"):
+            metrics, backtest_id = Backtester(PostgresBacktestStore(app)).run(
+                portfolio_id=p, as_of=NOW + timedelta(hours=2)
+            )
 
         with full.transaction() as tx:
             row = tx.repository(BacktestResult).get_one(backtest_id=backtest_id)
-        # 500 investiti a 50 = 10 quote; ultimo prezzo 60 -> +100
-        assert metrics.pnl == pytest.approx(100.0)
-        assert row.run_id == run_id and row.pnl == pytest.approx(100.0)
+            real_cash = tx.repository(Portfolio).get_one(portfolio_id=p).cash
+        # 500 investiti a 50 = 10 quote; 5 vendute a 55 (+275 di cash, +25 di
+        # profitto); le 5 rimaste valgono 60 a fine periodo (+50) -> +75
+        assert metrics.pnl == pytest.approx(75.0)
+        assert metrics.trades == 2
+        assert metrics.final_cash == pytest.approx(real_cash) == pytest.approx(775.0)
+        assert "cash simulato" not in caplog.text
+        assert (row.portfolio_id, row.pnl) == (p, pytest.approx(75.0))
 
 
 # --- DecisionEngine end-to-end ---------------------------------------------------------
@@ -442,10 +463,26 @@ class TestDecisionRepositoryCicli:
             repo.write_decision(run_id=old, asset_id=b, ts=NOW, decision=_decision(), context_snapshot={})
             repo.write_decision(run_id=current, asset_id=a, ts=NOW, decision=_decision(), context_snapshot={})
             latest = repo.latest_run(p)
-            decided = repo.decided_asset_ids(current)
+            decided = [d.asset_id for d in repo.run_decisions(current)]
 
         assert latest.run_id == current
-        assert decided == {a}
+        assert decided == [a]
+
+    def test_il_ricontrollo_si_salva_solo_se_accettato(self, full, app):
+        a = _asset(full, "TESTDE1")
+        p = _portfolio(full, "test-de-1")
+        deferred = Decision(decision="HOLD", reasoning="r",
+                            defer=DeferralRequest(recheck_after_hours=4, reason="trimestrale"))
+        with app.transaction() as tx:
+            repo = DecisionRepository(tx)
+            run_id = repo.create_run(portfolio_id=p, ts=NOW, config={}, llm_provider="f", model_version="m")
+            repo.write_decision(run_id=run_id, asset_id=a, ts=NOW, decision=deferred, context_snapshot={},
+                                recheck_at=NOW + timedelta(hours=4))
+            repo.write_decision(run_id=run_id, asset_id=a, ts=NOW, decision=deferred, context_snapshot={})
+            accepted, ignored = repo.run_decisions(run_id)
+
+        assert (accepted.recheck_at, accepted.recheck_reason) == (NOW + timedelta(hours=4), "trimestrale")
+        assert (ignored.recheck_at, ignored.recheck_reason) == (None, None)
 
     def test_finish_run_senza_errore_cancella_quello_precedente(self, full, app):
         p = _portfolio(full, "test-de-1")
@@ -517,4 +554,41 @@ class TestEngineEndToEnd:
         assert (run.status, run.error_message) == ("success", None)
         assert len(decisions) == 2 and runs == [first.run_id]
         # il BUY su TESTDE1 del primo tentativo non si ripete: un solo trade
+        assert cash == pytest.approx(500.0)
+
+    def test_rinvio_ripreso_nello_stesso_run_dal_giro_successivo(self, full, app):
+        p = self._setup(full)
+        with app.transaction() as tx:
+            PortfolioRepository(tx).replace_watchlist(p, [
+                a.asset_id for a in MarketContextRepository(tx).decision_universe() if a.symbol == "TESTDE1"
+            ], added_at=NOW)
+
+        class DefersOnce(FakeProvider):
+            """HOLD con rinvio di un'ora, poi BUY senza rinvio."""
+
+            def __init__(self):
+                super().__init__()
+                self.contexts = []
+
+            def decide(self, context):
+                self.contexts.append(context)
+                if len(self.contexts) == 1:
+                    return Decision(decision="HOLD", reasoning="aspetto",
+                                    defer=DeferralRequest(recheck_after_hours=1, reason="dato macro alle 14"))
+                return _decision("BUY", 0.5)
+
+        provider = DefersOnce()
+        first = next(r for r in self._engine(app, provider).run_due() if r.portfolio_id == p)
+        later = NOW + timedelta(hours=1)
+        recheck = next(r for r in self._engine(app, provider, later).run_due() if r.portfolio_id == p)
+
+        with full.session() as session:
+            decisions = session.execute(
+                select(ModelDecision).where(ModelDecision.run_id == first.run_id).order_by(ModelDecision.decision_id)
+            ).scalars().all()
+            cash = session.get(Portfolio, p).cash
+        assert (recheck.kind, recheck.run_id, recheck.rechecks) == ("ripresa", first.run_id, 1)
+        assert [(d.decision, d.recheck_at) for d in decisions] == [("HOLD", NOW + timedelta(hours=1)), ("BUY", None)]
+        assert decisions[0].recheck_reason == "dato macro alle 14"
+        assert provider.contexts[1]["previous_decision"]["recheck_reason"] == "dato macro alle 14"
         assert cash == pytest.approx(500.0)
