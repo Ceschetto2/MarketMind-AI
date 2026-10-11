@@ -37,6 +37,8 @@
 #   MARKETMIND_ENV_FILE     file con password e chiavi API (default:
 #                           ~/.config/marketmind/server.env): MARKETMIND_DB_PASSWORD,
 #                           MARKETMIND_INGESTION_PASSWORD, MARKETMIND_APP_PASSWORD,
+#                           MARKETMIND_READONLY_PASSWORD (ruolo della dashboard, che
+#                           gira sul laptop via tunnel: nessun secret nel volume),
 #                           FINNHUB_API_KEY, FRED_API_KEY, FMP_API_KEY, GEMINI_API_KEY
 #   MARKETMIND_DB_PORT      porta pubblicata su 127.0.0.1 del server (default: 5432)
 #   MARKETMIND_DB_MEMORY    limite di memoria del container DB (default: 4g)
@@ -367,13 +369,15 @@ if [ "$KEEP_SECRETS" = "1" ]; then
     log "--keep-secrets: password dei ruoli lasciate invariate"
 else
     log "ruoli e password"
+    [ -n "${MARKETMIND_READONLY_PASSWORD:-}" ] || fail "\$MARKETMIND_READONLY_PASSWORD non impostata in $ENV_FILE"
     {
-        for role in marketmind_ingestion marketmind_app; do
+        for role in marketmind_ingestion marketmind_app marketmind_readonly; do
             echo "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$role') THEN CREATE ROLE $role LOGIN; END IF; END \$\$;"
         done
         echo "ALTER ROLE marketmind PASSWORD $(sql_quote "$MARKETMIND_DB_PASSWORD");"
         echo "ALTER ROLE marketmind_ingestion PASSWORD $(sql_quote "$MARKETMIND_INGESTION_PASSWORD");"
         echo "ALTER ROLE marketmind_app PASSWORD $(sql_quote "$MARKETMIND_APP_PASSWORD");"
+        echo "ALTER ROLE marketmind_readonly PASSWORD $(sql_quote "$MARKETMIND_READONLY_PASSWORD");"
     } | psql_remote || fail "creazione dei ruoli fallita"
 
     if [ "$DB_ONLY" = "0" ]; then
@@ -381,6 +385,7 @@ else
         rendered_sql="$(<"$ROLES_SQL_TEMPLATE")"
         rendered_sql="${rendered_sql//%%MARKETMIND_INGESTION_PASSWORD%%/$MARKETMIND_INGESTION_PASSWORD}"
         rendered_sql="${rendered_sql//%%MARKETMIND_APP_PASSWORD%%/$MARKETMIND_APP_PASSWORD}"
+        rendered_sql="${rendered_sql//%%MARKETMIND_READONLY_PASSWORD%%/$MARKETMIND_READONLY_PASSWORD}"
         printf '%s\n' "$rendered_sql" | psql_remote || fail "init-roles.sql.tmpl fallito"
     fi
 fi

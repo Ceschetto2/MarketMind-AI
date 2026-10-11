@@ -23,7 +23,7 @@ Ogni job gira in un container con nome fisso (`marketmind-ingest-<pipeline>`, `m
 
 ## Prerequisiti sul laptop
 
-L'alias SSH `marketmind` in `~/.ssh/config`, con `ControlMaster auto`/`ControlPersist`, e una connessione master aperta (l'accesso al server è solo a password). Password e chiavi API del server in `~/.config/marketmind/server.env` (`600`, mai nel repo): `MARKETMIND_DB_PASSWORD`, `MARKETMIND_INGESTION_PASSWORD`, `MARKETMIND_APP_PASSWORD`, `FINNHUB_API_KEY`, `FRED_API_KEY`, `FMP_API_KEY`, `GEMINI_API_KEY`.
+L'alias SSH `marketmind` in `~/.ssh/config`, con `ControlMaster auto`/`ControlPersist`, e una connessione master aperta (l'accesso al server è solo a password). Password e chiavi API del server in `~/.config/marketmind/server.env` (`600`, mai nel repo): `MARKETMIND_DB_PASSWORD`, `MARKETMIND_INGESTION_PASSWORD`, `MARKETMIND_APP_PASSWORD`, `MARKETMIND_READONLY_PASSWORD` (ruolo di sola lettura della dashboard), `FINNHUB_API_KEY`, `FRED_API_KEY`, `FMP_API_KEY`, `GEMINI_API_KEY`.
 
 ## Comandi
 
