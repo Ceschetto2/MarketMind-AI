@@ -12,11 +12,12 @@ all'avvio, come ogni entry point di progetto
 - **Gestione**: creazione di un portfolio `model`, sospensione, modello e
   strategia, nuovo ciclo forzato, bootstrap (`init-portfolio`).
 - **Sistema**: ultimo esito di ogni pipeline di ingestion, avvio manuale di
-  pipeline e di un giro del Decision Engine, stato delle unit.
+  pipeline e di un giro del Decision Engine, storico delle richieste di job.
 
 Le letture passano da `repository` col ruolo `marketmind_readonly`, le
 scritture di gestione da `admin` con `marketmind_app` (`connections`); i
-job partono come unit systemd (`jobs`), mai dentro questo processo. Le
+job si accodano in `ops.t_job_requests` (`jobs`) e li avvia il dispatcher
+sull'host, mai questo processo, che può girare in un container. Le
 funzioni `_*` che costruiscono tabelle e grafici sono pure (nessun `st.*`),
 testabili senza il runtime di Streamlit; le funzioni di pagina no, stesso
 limite già accettato per gli entry point delle pipeline.
@@ -44,7 +45,8 @@ from marketmind_frontend.analytics import (
     valuation,
 )
 from marketmind_frontend.connections import DashboardDatabases, dashboard_databases
-from marketmind_frontend.jobs import DECIDE_UNIT, INIT_PORTFOLIO_UNIT, JobLaunchError, SystemdJobLauncher
+from marketmind_db.exceptions import AccessDeniedError
+from marketmind_frontend.jobs import PIPELINES, REQUEST_TTL, InvalidJobError, JobQueue, JobRequest
 from marketmind_frontend.repository import DashboardRepository
 from marketmind_frontend.views import (
     BacktestView,
@@ -69,7 +71,11 @@ _PRICE_LOOKBACK = timedelta(days=7)
 # Gli errori dei provider LLM includono l'intero payload della risposta:
 # nel riquadro d'avviso ne basta l'inizio, il testo completo è a richiesta.
 _NOTICE_CHARS = 300
-_STATUS_ICONS = {"success": "✅", "partial": "⚠️", "failed": "❌", "running": "⏳"}
+_STATUS_ICONS = {"success": "✅", "partial": "⚠️", "failed": "❌", "running": "⏳", "pending": "⏳",
+                 "started": "▶️"}
+# Una richiesta di job pendente da più di così: il dispatcher (ogni minuto)
+# probabilmente non sta girando.
+_DISPATCHER_STALL = timedelta(minutes=3)
 
 
 # --- formattazione (pura) ---------------------------------------------------------
@@ -186,6 +192,29 @@ def _backtests_dataframe(results: Sequence[BacktestView]) -> pd.DataFrame:
     )
 
 
+def _job_requests_dataframe(requests: Sequence[JobRequest]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Richiesta": r.job_request_id,
+                "Job": r.label,
+                "Stato": _status_label(r.status),
+                "Chiesto": _local(r.requested_at),
+                "Avviato": _local(r.started_at),
+                "Errore": r.error_message,
+            }
+            for r in requests
+        ]
+    )
+
+
+def _dispatcher_stalled(requests: Sequence[JobRequest], *, now: datetime) -> bool:
+    """Una richiesta ancora pendente da più di qualche minuto: il dispatcher,
+    che gira ogni minuto, probabilmente è fermo."""
+    return any(r.status == "pending" and r.requested_at and now - r.requested_at > _DISPATCHER_STALL
+               for r in requests)
+
+
 def _ingestion_dataframe(runs: Sequence[IngestionRunView], now: datetime) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -249,11 +278,6 @@ def _comparison_chart(comparison: pd.DataFrame, benchmark_symbol: str | None) ->
 @st.cache_resource
 def _databases() -> DashboardDatabases:
     return dashboard_databases()
-
-
-@st.cache_resource
-def _launcher() -> SystemdJobLauncher:
-    return SystemdJobLauncher()
 
 
 @dataclass
@@ -433,7 +457,7 @@ def _portfolio_page() -> None:
             "`python -m marketmind_llm_decision_engine backtest <portfolio> --start AAAA-MM-GG --end AAAA-MM-GG`."
         )
         if st.button("Calcola backtest", key=f"backtest_{p.portfolio_id}"):
-            _launch(lambda: _launcher().backtest(p.portfolio_id), "Backtest avviato")
+            _request_job("backtest", p.portfolio_id)
             st.rerun()
         _show_flash()
         if data.backtests:
@@ -461,14 +485,20 @@ def _role_notice() -> None:
             )
 
 
-def _launch(action, success: str) -> str | None:
+def _request_job(kind: str, target: object = None) -> None:
+    """Accoda un job (`ops.t_job_requests`): lo avvia il dispatcher sull'host
+    entro un minuto. La dashboard non comanda systemd, nemmeno in locale."""
     try:
-        unit = action()
-    except JobLaunchError as exc:
-        _flash(f"Job non avviato: {exc}", "error")
-        return None
-    _flash(f"{success} (`{unit}`): l'esito compare nei cicli/run quando il job termina.", "info")
-    return unit
+        with _databases().admin.database.transaction() as tx:
+            request, created = JobQueue(tx).request(kind, target, now=datetime.now(timezone.utc))
+    except (InvalidJobError, AccessDeniedError) as exc:
+        _flash(f"Job non richiesto: {exc}", "error")
+        return
+    if created:
+        _flash(f"Richiesto: {request.label} (richiesta {request.job_request_id}). Parte entro un minuto; "
+               "l'esito compare nei cicli, nei run o nei backtest quando il job termina.", "info")
+    else:
+        _flash(f"{request.label}: già in coda (richiesta {request.job_request_id}).", "info")
 
 
 def _create_portfolio_form(portfolios: list[PortfolioView]) -> None:
@@ -496,7 +526,7 @@ def _create_portfolio_form(portfolios: list[PortfolioView]) -> None:
         return
     _flash(f"Portfolio {spec.name!r} creato (id {portfolio_id}).")
     if init_now:
-        _launch(lambda: _launcher().init_portfolio(portfolio_id), "Bootstrap avviato")
+        _request_job("init-portfolio", portfolio_id)
     st.rerun()
 
 
@@ -525,18 +555,20 @@ def _manage_portfolio(p: PortfolioView) -> None:
                  help="Rende il portfolio dovuto e avvia `run-due`: decisione su tutta la watchlist."):
         with admin_db.transaction() as tx:
             PortfolioAdmin(tx).request_new_cycle(p.portfolio_id, now=datetime.now(timezone.utc))
-        _launch(_launcher().trigger_decision_run, "Giro del Decision Engine avviato")
+        _request_job("decide")
         st.rerun()
     if c2.button("Inizializza (rigenera la watchlist)", disabled=not confirm, key=f"init_{p.portfolio_id}",
                  help="`init-portfolio`: sostituisce la watchlist e fa un primo giro di decisioni."):
-        _launch(lambda: _launcher().init_portfolio(p.portfolio_id), "Bootstrap avviato")
+        _request_job("init-portfolio", p.portfolio_id)
         st.rerun()
-    try:
-        status = _launcher().status(INIT_PORTFOLIO_UNIT.format(portfolio_id=p.portfolio_id))
-        if status.active_state != "inactive" or status.finished:
-            st.caption(f"Ultimo bootstrap: {status.active_state} {status.result} {status.finished}".strip())
-    except JobLaunchError:
-        pass
+    with _databases().reader.database.transaction() as tx:
+        last_bootstrap = JobQueue(tx).latest_for("init-portfolio", p.portfolio_id)
+    if last_bootstrap is not None:
+        st.caption(
+            f"Ultimo bootstrap richiesto: {_local(last_bootstrap.requested_at):%d/%m %H:%M}, "
+            f"{_status_label(last_bootstrap.status)}"
+            + (f" — {last_bootstrap.error_message}" if last_bootstrap.error_message else "")
+        )
 
     with st.form(f"settings_{p.portfolio_id}"):
         model = st.text_input("Modello", value=p.model_version or "")
@@ -585,35 +617,34 @@ def _system_page() -> None:
         st.info("Nessun run di ingestion registrato.")
 
     st.subheader("Avvio manuale")
-    launcher = _launcher()
-    try:
-        pipelines = launcher.pipelines()
-    except JobLaunchError as exc:
-        st.warning(f"systemd non raggiungibile da questa macchina, avvio manuale non disponibile: {exc}")
-        return
+    st.caption(
+        "I job si accodano e li avvia il dispatcher sull'host (`marketmind-dispatch.timer`, ogni minuto), "
+        f"con gli stessi container dei timer. Una richiesta non presa in carico entro {_age(REQUEST_TTL)} scade."
+    )
     c1, c2 = st.columns(2)
     with c1:
-        pipeline = st.selectbox("Pipeline", pipelines)
-        if st.button("Avvia pipeline", disabled=not pipelines):
-            _launch(lambda: launcher.trigger_pipeline(pipeline), f"Pipeline {pipeline} avviata")
+        pipeline = st.selectbox("Pipeline", PIPELINES)
+        if st.button("Avvia pipeline"):
+            _request_job("pipeline", pipeline)
             st.rerun()
     with c2:
         st.caption("`run-due`: apre i cicli dovuti e riprende quelli incompleti, per tutti i portfolio attivi.")
         if st.button("Avvia giro del Decision Engine"):
-            _launch(launcher.trigger_decision_run, "Giro del Decision Engine avviato")
+            _request_job("decide")
             st.rerun()
 
-    st.subheader("Stato delle unit")
-    units = [DECIDE_UNIT] + [f"marketmind-ingest-{name}.service" for name in pipelines]
-    statuses = [launcher.status(unit) for unit in units]
-    st.dataframe(
-        pd.DataFrame(
-            [{"Unit": s.unit, "Stato": s.active_state, "Risultato": s.result, "Ultima fine": s.finished}
-             for s in statuses]
-        ),
-        hide_index=True,
-        use_container_width=True,
-    )
+    st.subheader("Richieste di job")
+    with _databases().reader.database.transaction() as tx:
+        requests = JobQueue(tx).recent()
+    if _dispatcher_stalled(requests, now=now):
+        st.warning("⚠️ Ci sono richieste in attesa da più di qualche minuto: il dispatcher non sta girando? "
+                   "Controlla con `systemctl --user status marketmind-dispatch.timer`.")
+    if requests:
+        st.dataframe(_job_requests_dataframe(requests), hide_index=True, use_container_width=True,
+                     column_config={"Chiesto": st.column_config.DatetimeColumn(format="DD/MM HH:mm:ss"),
+                                    "Avviato": st.column_config.DatetimeColumn(format="DD/MM HH:mm:ss")})
+    else:
+        st.info("Nessuna richiesta di job finora.")
 
 
 def main() -> None:

@@ -1,0 +1,14 @@
+# Ogni minuto il dispatcher prende in carico i job chiesti dalla dashboard
+# (ops.t_job_requests) e avvia le unit corrispondenti. Un giro senza
+# richieste è un solo `podman run` di pochi secondi, senza output.
+
+[Unit]
+Description=MarketMind AI — dispatcher dei job della dashboard, ogni minuto
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Unit=marketmind-dispatch.service
+
+[Install]
+WantedBy=timers.target

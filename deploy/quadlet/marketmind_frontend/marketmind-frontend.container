@@ -1,0 +1,41 @@
+# Quadlet Podman rootless per la dashboard Streamlit (`marketmind-frontend`,
+# `deploy/images/marketmind_frontend.dockerfile`), vedi
+# `Market Mind AI - Docs/Dashboard/00_dashboard.md`.
+#
+# Servizio sempre attivo, non un job: `Restart=on-failure`, avviato al login
+# (e al boot con il linger) e riavviato da deploy.sh dopo le migrazioni, così
+# usa l'immagine appena costruita.
+#
+# Porta pubblicata solo su 127.0.0.1: http://localhost:8501. Il DB si
+# raggiunge come `marketmind-db` sulla rete `marketmind.network`.
+#
+# Due ruoli Postgres, come in locale (`marketmind_frontend/connections.py`):
+# `marketmind_readonly` per le letture (secret
+# `marketmind-readonly-password`), `marketmind_app` per la gestione dei
+# portfolio e per accodare i job (secret `marketmind-app-password`). Nessuna
+# chiave API: la dashboard non chiama né l'LLM né le fonti dati. I job
+# (pipeline, run-due, bootstrap, backtest) li avvia il dispatcher sull'host
+# (`marketmind-dispatch.timer`), non questo container, che non vede systemd.
+
+[Unit]
+Description=MarketMind AI — dashboard Streamlit
+Requires=marketmind-db.service
+Wants=marketmind-migrate.service
+After=marketmind-db.service marketmind-migrate.service
+
+[Container]
+Image=localhost/marketmind-frontend:latest
+ContainerName=marketmind-frontend
+Network=marketmind.network
+PublishPort=127.0.0.1:8501:8501
+Secret=marketmind-readonly-password,type=env,target=MARKETMIND_READONLY_PASSWORD
+Secret=marketmind-app-password,type=env,target=MARKETMIND_APP_PASSWORD
+Environment=POSTGRES_HOST=marketmind-db
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB=marketmind
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

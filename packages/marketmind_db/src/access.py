@@ -34,11 +34,12 @@ class AccessPolicy:
 
 
 INGESTION = AccessPolicy("ingestion", frozenset({"market_data", "raw", "audit"}))
-APP = AccessPolicy("app", frozenset({"decisions", "portfolio"}))
+# `ops`: la coda dei job chiesti dalla dashboard (`ops.t_job_requests`).
+APP = AccessPolicy("app", frozenset({"decisions", "portfolio", "ops"}))
 READ_ONLY = AccessPolicy("read-only", frozenset())
 # Solo per strumenti di manutenzione e per il codice non ancora migrato al
 # repository generico (`get_session()`): il nuovo codice dichiara il
 # proprio ruolo.
 FULL_ACCESS = AccessPolicy(
-    "full", frozenset({"market_data", "raw", "audit", "decisions", "portfolio"})
+    "full", frozenset({"market_data", "raw", "audit", "decisions", "portfolio", "ops"})
 )

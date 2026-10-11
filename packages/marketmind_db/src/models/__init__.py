@@ -25,6 +25,7 @@ from marketmind_db.models.portfolio import (
     PortfolioSnapshot,
     PortfolioWatchlistEntry,
 )
+from marketmind_db.models.ops import JobRequest
 from marketmind_db.models.raw import CompanyEventRaw, NewsEventRaw
 
 __all__ = [
@@ -46,4 +47,5 @@ __all__ = [
     "PortfolioWatchlistEntry",
     "IngestionRun",
     "AuditLog",
+    "JobRequest",
 ]
