@@ -78,6 +78,14 @@ class TestTables:
         assert list(df["Decisione"]) == ["BUY"]
         assert df["Data"].iloc[0].hour == 12  # Europe/Rome, ora legale
 
+    def test_decisions_table_shows_requested_recheck(self):
+        d = DecisionView(7, T0, "AAPL", "HOLD", None, None, "attendo", T0 + timedelta(hours=4), "trimestrale")
+
+        df = _decisions_dataframe([d])
+
+        assert df["Ricontrollo"].iloc[0].hour == 16  # 14 UTC -> 16 Europe/Rome
+        assert list(df["Motivo rinvio"]) == ["trimestrale"]
+
     def test_runs_table_shows_outcome_and_error(self):
         runs = [RunView(42, T0, "gemini-x", "failed", T0, "429 quota", 3), RunView(41, T0, "gemini-x", None, None, None, 0)]
 

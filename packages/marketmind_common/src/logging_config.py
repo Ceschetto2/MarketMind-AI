@@ -2,7 +2,7 @@
 `Market Mind AI - Docs/Architettura/04_logging.md` per la convenzione
 completa (livelli, cosa loggare, relazione con `audit.t_ingestion_runs`).
 
-Ogni entry point standalone (script di ingestion, job di orchestration)
+Ogni entry point standalone (pipeline di ingestion, Decision Engine, dashboard)
 chiama `configure_logging()` una volta all'avvio, prima di fare qualunque
 altra cosa. I moduli di libreria non la chiamano mai: si limitano a
 `logging.getLogger(__name__)` e lasciano la configurazione degli handler a

@@ -12,30 +12,30 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-class DeferralRequest(BaseModel):
-    """Richiesta di rinvio: l'LLM chiede di essere ricontrollato più avanti
-    invece di aspettare la prossima cadenza settimanale ordinaria (es. un
-    annuncio o un evento macro imminente rendono la finestra attuale poco
-    informativa). Non è tool-use: la `Decision` che la contiene si completa
-    comunque nello stesso turno, la richiesta viene solo annotata ed
-    elaborata dopo, in modo asincrono, da `orchestration/`.
+# La cadenza di default di un portfolio è 7 giorni (168 ore): un rinvio più
+# lungo cadrebbe nel ciclo successivo, che ridecide comunque tutto.
+MAX_RECHECK_HOURS = 167
 
-    Il ritardo è relativo (`retry_after_minutes`), non un timestamp
-    assoluto: si passa direttamente a `--on-active` di `systemd-run`, il
-    meccanismo di scheduling scelto (dettaglio in
-    `Market Mind AI - Docs/Decision Engine/01_rinvio_decisione_e_orchestration.md`).
-    `refresh_pipeline`/`refresh_symbol` sono suggerimenti opzionali su cosa
-    aggiornare prima di ridecidere — quali parametri ciascuna pipeline
-    accetterà davvero resta da definire pipeline per pipeline.
+
+class DeferralRequest(BaseModel):
+    """Richiesta di rinvio: l'LLM chiede di rivalutare l'asset fra
+    `recheck_after_hours` ore, dentro il ciclo in corso, invece di aspettare
+    il ciclo successivo (es. una trimestrale o un dato macro imminenti). Non
+    è tool-use e non sospende la decisione: la `Decision` che la contiene
+    vale ed è eseguita subito, il ricontrollo sarà una decisione nuova.
+
+    Il motore salva il momento del ricontrollo sulla decisione
+    (`t_model_decisions.recheck_at`/`recheck_reason`) e il giro orario
+    `run-due` lo riprende quando scade, con i dati già aggiornati dalle
+    pipeline orarie: nessun refresh ad-hoc. Ore intere perché il giro è
+    orario, una precisione al minuto non verrebbe rispettata.
     """
 
-    # ge=1, non gt=0: gt genera "exclusiveMinimum" nel JSON Schema, non
-    # supportato dal sottoinsieme che Gemini accetta come response_schema
-    # (ValidationError lato SDK, scoperto in un test end-to-end reale) — per
-    # un intero positivo ge=1 è equivalente e genera "minimum", supportato.
-    retry_after_minutes: int = Field(ge=1)
-    refresh_pipeline: Optional[str] = None
-    refresh_symbol: Optional[str] = None
+    # ge/le, non gt/lt: Gemini accetta "minimum"/"maximum" nel response_schema
+    # ma non "exclusiveMinimum" (ValidationError lato SDK, scoperto in un test
+    # end-to-end reale).
+    recheck_after_hours: int = Field(ge=1, le=MAX_RECHECK_HOURS)
+    reason: str
 
 
 class Decision(BaseModel):
@@ -44,8 +44,8 @@ class Decision(BaseModel):
     Rispecchia solo i campi che l'LLM produce direttamente in
     `decisions.t_model_decisions` — non `run_id`/`asset_id`/`ts`/
     `context_snapshot`, che `decision_engine/` aggiunge al momento della
-    persistenza. Dove persistere `defer`, se lo si persiste, è la stessa
-    domanda ancora aperta.
+    persistenza. `defer`, se presente, diventa il ricontrollo salvato sulla
+    decisione (`DeferralRequest`).
 
     `size_pct` è la size del trade, proposta dall'LLM stesso (non una
     regola deterministica calcolata a valle): percentuale (0-1) del cash

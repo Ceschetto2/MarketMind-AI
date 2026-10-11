@@ -80,6 +80,11 @@ class ModelDecision(Base):
     reasoning: Mapped[str | None] = mapped_column(Text)
     size_pct: Mapped[float | None] = mapped_column(Double)
     context_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Rinvio chiesto dall'LLM e accettato dal motore: quando rivalutare
+    # l'asset dentro il ciclo, e perché (migrazione `0019`). NULL se non c'è
+    # ricontrollo; il ricontrollo stesso è una decisione nuova nello stesso run.
+    recheck_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    recheck_reason: Mapped[str | None] = mapped_column(Text)
 
     run: Mapped["ModelRun"] = relationship(back_populates="decisions_made")
     # Nessun back_populates, stesso motivo di PortfolioPosition.asset: serve

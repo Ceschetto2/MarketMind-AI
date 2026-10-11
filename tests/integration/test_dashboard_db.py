@@ -229,6 +229,22 @@ class TestDecisionsRunsBacktests:
         assert [(d.decision, d.symbol, d.reasoning) for d in decisions] == [("SELL", "TESTDB1", "r3"),
                                                                              ("BUY", "TESTDB1", "r2")]
 
+    def test_decision_with_recheck(self, full, ro):
+        a = _asset(full, "TESTDB1")
+        run = _run(full, _portfolio(full, "test-dash-recheck"))
+        with full.transaction() as tx:
+            tx.repository(ModelDecision).insert(
+                [{"run_id": run, "asset_id": a, "ts": NOW, "decision": "HOLD", "context_snapshot": {},
+                  "recheck_at": NOW + timedelta(hours=4), "recheck_reason": "trimestrale"}]
+            )
+
+        with ro.transaction() as tx:
+            [decision] = DashboardRepository(tx).decisions(
+                next(p.portfolio_id for p in DashboardRepository(tx).portfolios() if p.name == "test-dash-recheck")
+            )
+
+        assert (decision.recheck_at, decision.recheck_reason) == (NOW + timedelta(hours=4), "trimestrale")
+
     def test_runs_with_outcome_and_decision_count(self, full, ro):
         a, b = _asset(full, "TESTDB1"), _asset(full, "TESTDB2")
         pid = _portfolio(full, "test-dash-runs")

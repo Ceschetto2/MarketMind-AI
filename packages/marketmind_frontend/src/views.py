@@ -87,6 +87,9 @@ class DecisionView:
     confidence: float | None
     size_pct: float | None
     reasoning: str | None
+    # Rinvio chiesto dall'LLM e accettato dal motore (migrazione `0019`).
+    recheck_at: datetime | None = None
+    recheck_reason: str | None = None
 
 
 @dataclass(frozen=True)

@@ -142,6 +142,8 @@ def _decisions_dataframe(decisions: Sequence[DecisionView]) -> pd.DataFrame:
                 "Confidence": d.confidence,
                 "Size %": d.size_pct,
                 "Reasoning": d.reasoning,
+                "Ricontrollo": _local(d.recheck_at),
+                "Motivo rinvio": d.recheck_reason,
             }
             for d in decisions
         ]
@@ -401,7 +403,8 @@ def _portfolio_page() -> None:
             shown = [d for d in data.decisions if d.decision in choice]
             st.dataframe(_decisions_dataframe(shown), hide_index=True, use_container_width=True,
                          column_config={"Size %": st.column_config.NumberColumn(format="percent"),
-                                        "Data": st.column_config.DatetimeColumn(format="DD/MM/YY HH:mm")})
+                                        "Data": st.column_config.DatetimeColumn(format="DD/MM/YY HH:mm"),
+                                        "Ricontrollo": st.column_config.DatetimeColumn(format="DD/MM/YY HH:mm")})
         else:
             st.info("Nessuna decisione ancora registrata.")
     with tabs[3]:

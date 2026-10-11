@@ -144,7 +144,8 @@ class DashboardRepository:
         )
         symbols = self._symbols(r.asset_id for r in rows)
         return [
-            DecisionView(r.run_id, r.ts, symbols[r.asset_id], r.decision, r.confidence, r.size_pct, r.reasoning)
+            DecisionView(r.run_id, r.ts, symbols[r.asset_id], r.decision, r.confidence, r.size_pct, r.reasoning,
+                         r.recheck_at, r.recheck_reason)
             for r in rows
         ]
 
