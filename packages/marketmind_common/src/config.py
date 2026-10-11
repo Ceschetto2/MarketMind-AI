@@ -1,8 +1,10 @@
 """Caricamento configurazione e secrets.
 
 In locale le chiavi vivono in un file `.env` in root (escluso da git, vedi
-`.env.example`); in produzione la stessa interfaccia potrà leggere da
-podman secret senza cambiare il chiamante.
+`.env.example`). Nei container ogni variabile può arrivare anche da un file,
+indicato da `<NOME>_FILE` (es. `POSTGRES_PASSWORD_FILE`), con precedenza sulla
+variabile semplice: così un secret montato da un volume Docker non passa mai
+dall'ambiente del container, visibile con `docker inspect`.
 """
 
 from __future__ import annotations
@@ -15,14 +17,25 @@ from dotenv import load_dotenv
 # packages/marketmind_common/src/config.py -> root del repo.
 # Installato come wheel in un'immagine (site-packages) il percorso non porta
 # a nessun `.env`, e `load_dotenv` non fa nulla: lì le variabili arrivano
-# dall'ambiente del container (Quadlet `Environment=`/`Secret=`).
+# dall'ambiente del container o dai file `<NOME>_FILE`.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
 
 
+def _read_setting(name: str, default: str | None = None) -> str | None:
+    """Valore di `name`: dal file in `<name>_FILE` se impostata, altrimenti dall'ambiente."""
+    file_path = os.environ.get(f"{name}_FILE")
+    if file_path:
+        try:
+            return Path(file_path).read_text().rstrip("\r\n")
+        except OSError as exc:
+            raise RuntimeError(f"Impossibile leggere {name}_FILE ({file_path}): {exc}") from exc
+    return os.environ.get(name, default)
+
+
 def get_api_key(name: str) -> str:
     """Legge una API key dall'ambiente, sollevando un errore esplicito se manca."""
-    value = os.environ.get(name)
+    value = _read_setting(name)
     if not value:
         raise RuntimeError(
             f"Variabile d'ambiente '{name}' non impostata. Copia .env.example in .env "
@@ -43,7 +56,7 @@ def get_database_url() -> str:
         return explicit_url
 
     user = os.environ.get("POSTGRES_USER", "marketmind")
-    password = os.environ.get("POSTGRES_PASSWORD", "marketmind")
+    password = _read_setting("POSTGRES_PASSWORD", "marketmind")
     # "localhost" risolve anche su ::1 (IPv6): il quadlet di sviluppo
     # pubblica solo su IPv4, quindi con "localhost" un tentativo di
     # connessione può restare appeso sul lato IPv6 fino al timeout prima
