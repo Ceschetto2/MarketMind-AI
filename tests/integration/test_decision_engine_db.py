@@ -80,7 +80,7 @@ def _portfolio(db: Database, name: str, *, cash: float = 10_000.0, portfolio_typ
         [row] = tx.repository(Portfolio).insert_returning(
             [{
                 "name": name, "portfolio_type": portfolio_type, "starting_capital": cash, "cash": cash,
-                "equity_value": cash, "created_at": NOW, "is_active": is_active,
+                "created_at": NOW, "is_active": is_active,
                 "llm_provider": "fake" if model else None, "model_version": "fake-1" if model else None,
                 "strategy_prompt": "test" if model else None, "next_decision_at": next_decision_at,
             }],

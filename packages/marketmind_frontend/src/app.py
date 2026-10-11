@@ -353,8 +353,8 @@ def _portfolio_page() -> None:
     cols[3].metric(f"{data.benchmark_symbol or 'Benchmark'} stesso periodo", _pct(benchmark_return))
     cols[4].metric("Max drawdown", _pct(summary.max_drawdown))
     st.caption(
-        "Equity = cash + posizioni all'ultimo close noto (mark-to-market calcolato dalla dashboard; "
-        "`equity_value` del DB non è aggiornato dal motore). Un asset senza prezzi vale il suo costo."
+        "Equity = cash + posizioni all'ultimo close noto (mark-to-market). "
+        "Un asset senza prezzi vale il suo costo."
     )
 
     tabs = st.tabs(["Andamento", "Posizioni", "Decisioni", "Cicli", "Backtest"])

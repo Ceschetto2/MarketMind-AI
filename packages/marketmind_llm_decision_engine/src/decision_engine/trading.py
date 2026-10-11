@@ -10,8 +10,8 @@ La size è quella proposta dall'LLM (`Decision.size_pct`): per un BUY la
 frazione del cash disponibile da investire, per un SELL la frazione della
 posizione corrente da liquidare. Un SELL senza posizione, o una size che
 non sposta nulla, non è un errore: il piano risulta semplicemente senza
-cambiamenti. `equity_value` non viene ricalcolato (richiederebbe il
-mark-to-market di tutte le posizioni, punto aperto).
+cambiamenti. Il valore di mercato del portfolio non si salva: si calcola da
+cash, posizioni e prezzi quando serve (dashboard, backtest).
 """
 
 from __future__ import annotations

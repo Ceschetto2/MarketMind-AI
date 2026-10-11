@@ -1,9 +1,8 @@
 """Calcoli della dashboard: equity curve mark-to-market, valorizzazione delle
 posizioni, confronto col benchmark.
 
-Tutto in sola lettura e solo qui: `t_portfolios.equity_value` non viene
-ricalcolato dal Decision Engine (punto aperto), quindi la dashboard non lo
-usa. L'equity in ogni istante è `cash` + Σ quantità × ultimo close noto a
+Il valore di mercato di un portfolio non è salvato nel DB (migrazione
+`0018`): si calcola qui, in sola lettura. L'equity in ogni istante è `cash` + Σ quantità × ultimo close noto a
 quell'istante, ricostruita da `t_portfolio_snapshots` (cash),
 `t_portfolio_position_snapshots` (quantità) e `t_market_prices` (close).
 Un asset senza alcun close noto è valorizzato al prezzo medio di carico,

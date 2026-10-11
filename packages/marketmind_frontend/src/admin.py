@@ -69,7 +69,6 @@ class PortfolioAdmin:
                     "portfolio_type": "model",
                     "starting_capital": spec.starting_capital,
                     "cash": spec.starting_capital,
-                    "equity_value": spec.starting_capital,
                     "created_at": now,
                     "is_active": spec.is_active,
                     "llm_provider": spec.llm_provider,
