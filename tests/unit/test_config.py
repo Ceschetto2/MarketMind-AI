@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from marketmind_common.config import get_api_key, get_database_url
+from marketmind_common.config import get_api_key, get_database_url, get_role_database_url
 
 _DB_VARS = (
     "DATABASE_URL",
@@ -78,3 +78,51 @@ def test_database_url_password_from_file(clean_env, tmp_path):
 
 def test_database_url_defaults(clean_env):
     assert get_database_url() == "postgresql+psycopg://marketmind:marketmind@127.0.0.1:5432/marketmind"
+
+
+# --- URL per un ruolo applicativo specifico ------------------------------------
+# La dashboard usa due ruoli diversi da `POSTGRES_USER` (`marketmind_readonly`
+# per leggere, `marketmind_app` per la gestione dei portfolio): stesso host,
+# porta e database, credenziali proprie.
+
+
+@pytest.fixture
+def role_env(clean_env):
+    clean_env.delenv("TEST_ROLE_PASSWORD", raising=False)
+    clean_env.delenv("TEST_ROLE_PASSWORD_FILE", raising=False)
+    return clean_env
+
+
+def test_role_url_uses_role_credentials_and_shared_host(role_env):
+    role_env.setenv("POSTGRES_USER", "marketmind")
+    role_env.setenv("POSTGRES_PASSWORD", "superuser-secret")
+    role_env.setenv("POSTGRES_HOST", "db.example")
+    role_env.setenv("POSTGRES_PORT", "6543")
+    role_env.setenv("POSTGRES_DB", "mm")
+    role_env.setenv("TEST_ROLE_PASSWORD", "role-secret")
+
+    url = get_role_database_url("marketmind_readonly", "TEST_ROLE_PASSWORD")
+
+    assert url == "postgresql+psycopg://marketmind_readonly:role-secret@db.example:6543/mm"
+
+
+def test_role_url_password_from_file(role_env, tmp_path):
+    secret = tmp_path / "pw"
+    secret.write_text("from-file\n")
+    role_env.setenv("TEST_ROLE_PASSWORD_FILE", str(secret))
+
+    url = get_role_database_url("marketmind_app", "TEST_ROLE_PASSWORD")
+
+    assert url == "postgresql+psycopg://marketmind_app:from-file@127.0.0.1:5432/marketmind"
+
+
+def test_role_url_quotes_special_characters_in_password(role_env):
+    role_env.setenv("TEST_ROLE_PASSWORD", "a@b:c/d")
+
+    url = get_role_database_url("marketmind_app", "TEST_ROLE_PASSWORD")
+
+    assert "marketmind_app:a%40b%3Ac%2Fd@" in url
+
+
+def test_role_url_is_none_without_password(role_env):
+    assert get_role_database_url("marketmind_readonly", "TEST_ROLE_PASSWORD") is None

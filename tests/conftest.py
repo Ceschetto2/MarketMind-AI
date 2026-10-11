@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from marketmind_db.access import APP, FULL_ACCESS, INGESTION
+from marketmind_db.access import APP, FULL_ACCESS, INGESTION, READ_ONLY
 from marketmind_db.database import Database, DatabaseSettings
 from marketmind_db.session import get_engine
 
@@ -94,3 +94,10 @@ def rollback_app_db(rollback_connection) -> Database:
 def rollback_full_db(rollback_connection) -> Database:
     """`Database` con policy `FULL_ACCESS`, per preparare i dati di prova."""
     return _bound_database(rollback_connection, FULL_ACCESS)
+
+
+@pytest.fixture
+def rollback_readonly_db(rollback_connection) -> Database:
+    """`Database` con policy `READ_ONLY` (dashboard) sulla stessa transazione
+    annullata di `rollback_full_db`."""
+    return _bound_database(rollback_connection, READ_ONLY)
